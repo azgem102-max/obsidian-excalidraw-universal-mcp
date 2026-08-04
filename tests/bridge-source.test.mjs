@@ -114,37 +114,69 @@ function extractMethod(source, name, endMarker, { declarations = "", fixtures = 
   `)();
 }
 
-// الخط يملكه المستخدم لا المستودع: لا خط في Git، ويضيفه بـ--font فيصبح العائلة
-// الرابعة. وكل رقم ثابت يخسر حالة، وترك المفتاح بلا استعادة يخسر ثالثة.
-test("font family survives creation while element size never leaks", async () => {
+// الخط يملكه المستخدم لا المستودع، وكل رقم ثابت يخسر حالة. و`ea.style` تُنشأ في
+// Excalidraw بـ`fontFamily: 1` مثبَّتًا في الكود — تحقّقنا من ذلك في مصدر 2.25.3 —
+// فالهدف يُحسب من أوثق مصدر متاح لا من أول قيمة نراها.
+test("font family resolves from the authoritative source while size never leaks", async () => {
   const source = await fs.readFile(bridgePath, "utf8");
-  const { build } = extractMethod(source, "applyStyle", "  copyBindingTargetsToWorkbench");
-  const bridge = build({ baselineFontFamily: undefined });
-  const ea = {
+  const { build } = extractMethod(source, "defaultFontFamily", "  applyStyle(ea, params)");
+  const applyStyleBody = source.slice(source.indexOf("  applyStyle(ea, params)"), source.indexOf("  copyBindingTargetsToWorkbench"));
+
+  const makeBridge = (deps) => {
+    const bridge = build(deps);
+    // ‏applyStyle تُستدعى على نفس الكائن حتى تعمل this.defaultFontFamily.
+    bridge.applyStyle = new Function("return function " + applyStyleBody.trim().replace(/^applyStyle/, "applyStyle"))();
+    return bridge;
+  };
+  const freshStyle = (fontFamily) => ({
     style: {
       strokeColor: "#000", backgroundColor: "transparent", fillStyle: "solid",
       strokeWidth: 2, strokeStyle: "solid", roughness: 1, opacity: 100,
-      // خزنة فيها خط المستخدم مفعَّل: هذا ما يجب أن ينجو.
-      fontSize: 20, fontFamily: 4, textAlign: "left", verticalAlign: "top",
+      fontSize: 20, fontFamily, textAlign: "left", verticalAlign: "top",
       roundness: null, startArrowHead: null, endArrowHead: "arrow",
     },
-  };
+  });
+  const withFont = { arabicFontFamily: 4, families: [] };
+  const withoutFont = { arabicFontFamily: null, families: [] };
 
-  bridge.applyStyle(ea, { fontSize: 72, fontFamily: 3, strokeStyle: "dashed" });
-  assert.equal(ea.style.fontSize, 72, "التمرير الصريح للمقاس يجب أن يعمل");
-  assert.equal(ea.style.fontFamily, 3, "التمرير الصريح للعائلة يجب أن يعمل");
+  // الطبقة 1: اختيار المستخدم في الواجهة يفوز على كل ما بعده.
+  const uiPicked = makeBridge({
+    baselineFontFamily: undefined,
+    getFontStatus: () => withFont,
+  });
+  const ea1 = freshStyle(1);
+  ea1.targetView = { excalidrawAPI: { getAppState: () => ({ currentItemFontFamily: 2 }) } };
+  uiPicked.applyStyle(ea1, { fontSize: 72, fontFamily: 3, strokeStyle: "dashed" });
+  assert.equal(ea1.style.fontFamily, 3, "التمرير الصريح يعمل");
+  assert.equal(ea1.style.fontSize, 72);
+  uiPicked.applyStyle(ea1, {});
+  assert.equal(ea1.style.fontFamily, 2, "يعود إلى اختيار الواجهة لا إلى 3 ولا إلى 1");
+  assert.equal(ea1.style.fontSize, 20, "مقاس عنصر لا يسري على ما بعده");
+  assert.equal(ea1.style.strokeStyle, "solid");
 
-  bridge.applyStyle(ea, {});
-  assert.equal(ea.style.fontFamily, 4, "خط المستخدم يجب أن ينجو ولا يُفرض 1");
-  assert.equal(ea.style.fontSize, 20, "مقاس عنصر لا يجوز أن يسري على ما بعده");
-  assert.equal(ea.style.strokeStyle, "solid", "التقطيع لا يجوز أن يسري");
+  // الطبقة 2: بلا واجهة، خزنة خطها مفعَّل ⇒ 4 وليس 1 المثبَّت في ea.style.
+  const settingsOnly = makeBridge({ baselineFontFamily: undefined, getFontStatus: () => withFont });
+  const ea2 = freshStyle(1);
+  settingsOnly.applyStyle(ea2, { fontFamily: 3 });
+  settingsOnly.applyStyle(ea2, {});
+  assert.equal(ea2.style.fontFamily, 4, "خط الخزنة المفعَّل هو الافتراضي، لا 1");
 
-  // خزنة بلا خط: يبقى 1 ولا يُفرض 4 — الخطأ المقابل.
-  const plain = build({ baselineFontFamily: undefined });
-  const bare = { style: { ...ea.style, fontFamily: 1, fontSize: 20 } };
-  plain.applyStyle(bare, { fontFamily: 3 });
-  plain.applyStyle(bare, {});
-  assert.equal(bare.style.fontFamily, 1, "خزنة بلا خط تبقى على 1، ولا تُدفع إلى 4");
+  // خزنة بلا خط: تبقى على 1 ولا تُدفع إلى 4 — الخطأ المقابل.
+  const bare = makeBridge({ baselineFontFamily: undefined, getFontStatus: () => withoutFont });
+  const ea3 = freshStyle(1);
+  bare.applyStyle(ea3, { fontFamily: 3 });
+  bare.applyStyle(ea3, {});
+  assert.equal(ea3.style.fontFamily, 1, "بلا خط تبقى 1، ولا تُفرض 4");
+
+  // الطبقة 3: كل المصادر تفشل ⇒ أول قيمة رأيناها، ولا رمي.
+  const blind = makeBridge({
+    baselineFontFamily: undefined,
+    getFontStatus: () => { throw new Error("EXCALIDRAW_NOT_LOADED"); },
+  });
+  const ea4 = freshStyle(4);
+  blind.applyStyle(ea4, { fontFamily: 3 });
+  blind.applyStyle(ea4, {});
+  assert.equal(ea4.style.fontFamily, 4, "تعود إلى القيمة الأساسية الملتقطة");
 });
 
 // «استخدم fontFamily: 4 عندما يكون الخط مفعّلًا» كان شرطًا لا يستطيع الوكيل
@@ -200,13 +232,24 @@ test("status reports the real Arabic font state so agents never guess", async ()
     "مجلد لا يجوز أن يُعدّ خطًا مثبَّتًا",
   );
 
-  // 6) مسارات خارج الخزنة لا تُعدّ جاهزة.
+  // 6) القيمة الافتراضية في Excalidraw هي الاسم المجرّد "Virgil" لا مسار ملف.
+  // قراءتها «مسجَّل وملفه مفقود» إنذار كاذب يصيب كل خزنة لم يُضف إليها خط.
+  const fallbackName = read(
+    { experimentalEnableFourthFont: true, experimantalFourthFont: "Virgil" },
+    { Virgil: fixtures.file },
+  );
+  assert.equal(fallbackName.arabicFontFamily, null);
+  assert.equal(fallbackName.families.at(-1).vaultPath, null, "الاسم المجرّد يُعدّ «غير مسجَّل»");
+  assert.doesNotMatch(fallbackName.guidance, /مفقود/, "لا إنذار «ملف مفقود» على الحالة الافتراضية");
+  assert.match(fallbackName.guidance, /لا خط عربي مثبَّت/);
+
+  // 7) مسارات خارج الخزنة لا تُعدّ جاهزة.
   for (const bad of ["../../../etc/passwd", "/abs/f.ttf", "C:\\fonts\\f.ttf", "fonts\\f.ttf"]) {
     const result = read({ experimentalEnableFourthFont: true, experimantalFourthFont: bad }, { [bad]: fixtures.file });
     assert.equal(result.arabicFontFamily, null, `مسار خارج الخزنة يجب ألا يكون جاهزًا: ${bad}`);
   }
 
-  // 7) إعدادات معطوبة: لا يسقط `status`، ولا يكذب بأن «لا خط مثبَّت».
+  // 8) إعدادات معطوبة: لا يسقط `status`، ولا يكذب بأن «لا خط مثبَّت».
   const broken = build({
     getExcalidrawPlugin: () => ({ get settings() { throw new Error("corrupt"); } }),
     app: { vault: { getAbstractFileByPath: () => null } },
@@ -215,7 +258,7 @@ test("status reports the real Arabic font state so agents never guess", async ()
   assert.equal(broken.families.at(-1).unreadable, true);
   assert.match(broken.guidance, /مجهولة/, "الحالة المجهولة لا تُعرَض كأنها «لا خط»");
 
-  // 8) إملاء المفتاح upstream فيه خطأ مطبعي أصلي؛ أي «تصحيح» يكسر القراءة صامتًا.
+  // 9) إملاء المفتاح upstream فيه خطأ مطبعي أصلي؛ أي «تصحيح» يكسر القراءة صامتًا.
   const fonts = source.slice(source.indexOf("  getFontStatus() {"), source.indexOf("  listDrawings(params) {"));
   assert.match(fonts, /experimantalFourthFont/);
 

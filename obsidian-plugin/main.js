@@ -472,13 +472,17 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       const settings = this.getExcalidrawPlugin().settings || {};
       // مفتاح الإضافة الأصلي مكتوب بهذا الإملاء upstream؛ لا تصحّحه.
       const raw = settings.experimantalFourthFont;
-      // مسار داخل الخزنة فقط: مطلقًا أو صاعدًا بـ`..` أو بشرطة خلفية لا تحمّله
-      // الإضافة، فالإبلاغ عنه «جاهزًا» كذب. عُدّه غير مسجَّل.
-      const vaultPath =
-        typeof raw === "string" && raw && !raw.startsWith("/") && !raw.includes("\\") &&
-        !raw.split("/").includes("..") && !/^[A-Za-z]:/.test(raw)
-          ? raw
-          : null;
+      // القيمة الافتراضية في Excalidraw 2.25.3 هي الاسم المجرّد "Virgil" لا مسار
+      // ملف — أي «لا خط مخصّص». فاشتراط لاحقة ملف خط هو ما يفرّق «غير مثبَّت» عن
+      // «مسجَّل وملفه مفقود». وبلا هذا الشرط تُبلَّغ كل خزنة افتراضية بأن ملف خطها
+      // مفقود، وهو إنذار كاذب يصيب أكثر المستخدمين.
+      // ومسار خارج الخزنة — مطلق أو صاعد بـ`..` أو بشرطة خلفية — لا تحمّله الإضافة،
+      // فالإبلاغ عنه «جاهزًا» كذب. اللواحق هي التي يقبلها install.mjs نفسه.
+      const looksLikeFontFile = typeof raw === "string" && /\.(otf|ttf|woff2?)$/i.test(raw);
+      const insideVault =
+        looksLikeFontFile && !raw.startsWith("/") && !raw.includes("\\") &&
+        !raw.split("/").includes("..") && !/^[A-Za-z]:/.test(raw);
+      const vaultPath = insideVault ? raw : null;
       const enabled = settings.experimentalEnableFourthFont === true;
       // ملف لا مجلد: `getAbstractFileByPath` يعيد TFolder أيضًا، ومجلد ليس خطًا.
       const resolved = vaultPath ? this.app.vault.getAbstractFileByPath(vaultPath) : null;
@@ -1036,6 +1040,36 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     return { elements, count: elements.length, path: scene.path };
   }
 
+  /**
+   * عائلة الخط التي يجب أن يعود إليها كل عنصر لم يطلب عائلة صريحة.
+   *
+   * ‏`ea.style` تُنشأ في Excalidraw 2.25.3 بـ`fontFamily: 1` **مثبَّتًا في الكود**،
+   * لا مشتقًّا من إعداد الخزنة. فالاعتماد على أول قيمة نراها قد يثبّت `1` على خزنة
+   * خطها العربي مفعَّل. لذلك يُسأل أوثق مصدر أولًا، وكل طبقة قد تفشل فتُسلّم للتالية:
+   *
+   *   1. اختيار المستخدم الحالي في الواجهة (`currentItemFontFamily`) — وهو ما كان
+   *      سيحصل عليه لو كتب النص بيده.
+   *   2. إعداد الخزنة: خط رابع مفعَّل وملفه موجود ⇒ 4.
+   *   3. أول قيمة رأيناها قبل أن نلمس شيئًا.
+   *
+   * و`null` تعني: لا تلمس المفتاح إطلاقًا. لا يخمّن الجسر رقمًا في أي حالة.
+   */
+  defaultFontFamily(ea) {
+    try {
+      const state = ea?.targetView?.excalidrawAPI?.getAppState?.();
+      const current = state?.currentItemFontFamily;
+      if (Number.isFinite(current)) return current;
+    } catch {
+      // واجهة العرض غير متاحة أو تغيّرت: انتقل للطبقة التالية بلا رمي.
+    }
+    try {
+      if (this.getFontStatus().arabicFontFamily === 4) return 4;
+    } catch {
+      // إضافة Excalidraw غير محمّلة: انتقل للطبقة التالية.
+    }
+    return this.baselineFontFamily === undefined ? null : this.baselineFontFamily;
+  }
+
   applyStyle(ea, params) {
     // ea.style حالة عامة تبقى بين النداءات: عنصر متقطع واحد كان يجعل كل ما بعده
     // متقطعًا بشفافية موروثة. أعِد الافتراضيات القياسية ثم طبّق المطلوب فقط.
@@ -1056,17 +1090,15 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       if (key in ea.style) ea.style[key] = value;
     }
 
-    // ‏fontFamily وحده لا يُستعاد إلى رقم ثابت — يُستعاد إلى ما كان عليه **قبل أن
-    // يلمسه الجسر**. السبب أن العائلة الرابعة يملكها المستخدم لا المستودع: يضيف
-    // خطه بـ`--font` فتحمله الخزنة افتراضًا. وكل رقم ثابت يخسر حالة: فرض `1`
-    // يُلغي خط من ثبّته فيخرج نصه العربي بحروف مفكّكة، وفرض `4` يضيّع النص على
-    // خزنة بلا خط. وترك المفتاح دون استعادة يخسر حالة ثالثة: عنصر واحد يمرّر
-    // `fontFamily: 3` يجعل كل ما بعده بالخط نفسه — وهو تسرّب الحالة الذي وُضعت
-    // هذه الاستعادة لمنعه أصلًا. فتُلتقط القيمة الأساسية مرة واحدة قبل أي تعديل،
-    // وإليها تعود. والوكيل يقرأ الرقم الصحيح من `status.fonts.arabicFontFamily`.
+    // ‏fontFamily لا يُستعاد إلى رقم ثابت. العائلة الرابعة يملكها المستخدم لا
+    // المستودع، وكل ثابت يخسر حالة: فرض `1` يُلغي خط من ثبّته فيخرج نصه العربي
+    // بحروف مفكّكة، وفرض `4` يضيّع النص على خزنة بلا خط، وترك المفتاح دون استعادة
+    // يخسر ثالثة — عنصر يمرّر `fontFamily: 3` يجعل كل ما بعده بالخط نفسه، وهو
+    // تسرّب الحالة الذي وُضعت الاستعادة لمنعه. فيُحسب الهدف من أوثق مصدر متاح.
     if ("fontFamily" in ea.style) {
       if (this.baselineFontFamily === undefined) this.baselineFontFamily = ea.style.fontFamily;
-      ea.style.fontFamily = this.baselineFontFamily;
+      const target = this.defaultFontFamily(ea);
+      if (target !== null) ea.style.fontFamily = target;
     }
     ea.style.startArrowHead = null;
     ea.style.endArrowHead = "arrow";
