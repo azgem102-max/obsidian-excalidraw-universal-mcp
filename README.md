@@ -1,4 +1,4 @@
-# خلّ الذكاء الاصطناعي يعمل داخل Obsidian وExcalidraw
+# Obsidian وExcalidraw مع Claude وCodex
 
 هذا المشروع يجهّز Claude أو Codex أو أي مساعد يدعم MCP لكي يقرأ ويكتب ملاحظاتك، ويفتح رسومات Excalidraw ويعدّلها من داخل Obsidian.
 
