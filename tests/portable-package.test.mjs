@@ -150,3 +150,129 @@ test("doctor separates installation readiness from a stale live bridge", async (
     await fs.rm(temporary, { recursive: true, force: true });
   }
 });
+
+// «استخدم fontFamily: 4 عندما يكون الخط مفعّلًا» شرطٌ كان على الوكيل أن يخمّنه.
+// الطبيب يقرأه من إعدادات Excalidraw على القرص، فيعمل بلا Obsidian مفتوح — وهو
+// معلومة لا شرط: الخط اختياري ويملكه المستخدم، فلا يؤثر في رمز الخروج.
+test("doctor reports the Arabic font state without making it a requirement", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-font-"));
+  const vault = path.join(temporary, "Vault");
+  const settings = path.join(vault, ".obsidian", "plugins", "obsidian-excalidraw-plugin");
+  const fontRelative = "Excalidraw/Custom Fonts/user-owned.woff2";
+  try {
+    await fs.mkdir(settings, { recursive: true });
+    await fs.mkdir(path.join(vault, "Excalidraw", "Custom Fonts"), { recursive: true });
+    // خزنة مكتملة التثبيت، وإلا كان installReady دائمًا false فلا يُثبت شيئًا.
+    for (const id of ["obsidian-excalidraw-plugin", "excalidraw-extras", "obsidian-excalidraw-mcp-bridge"]) {
+      await fs.mkdir(path.join(vault, ".obsidian", "plugins", id), { recursive: true });
+      await fs.writeFile(
+        path.join(vault, ".obsidian", "plugins", id, "manifest.json"),
+        JSON.stringify({ id, version: id === "obsidian-excalidraw-plugin" ? "2.25.3" : id === "excalidraw-extras" ? "0.0.15" : "0.6.0" }),
+      );
+    }
+    await fs.writeFile(
+      path.join(vault, ".obsidian", "community-plugins.json"),
+      JSON.stringify(["obsidian-excalidraw-plugin", "excalidraw-extras", "obsidian-excalidraw-mcp-bridge"]),
+    );
+    for (const [folder, count] of [["أدوات التخطيط", 17], ["الحزمة الاحترافية", 15]]) {
+      const directory = path.join(vault, "Excalidraw", "Scripts", folder);
+      await fs.mkdir(directory, { recursive: true });
+      await Promise.all(Array.from({ length: count }, (_, index) => fs.writeFile(path.join(directory, `${index}.md`), "")));
+    }
+
+    const run = async (data) => {
+      await fs.writeFile(path.join(settings, "data.json"), data);
+      const result = await execFileAsync(process.execPath, [
+        path.join(root, "doctor.mjs"), "--vault", vault, "--json", "--skip-live",
+      ]).then((ok) => ({ ...ok, code: 0 }), (error) => ({ stdout: error.stdout, code: error.code ?? 1 }));
+      return { ...JSON.parse(result.stdout), exitCode: result.code };
+    };
+    const registered = JSON.stringify({ experimentalEnableFourthFont: true, experimantalFourthFont: fontRelative });
+    const disabled = JSON.stringify({ experimentalEnableFourthFont: false, experimantalFourthFont: fontRelative });
+    const fontFile = path.join(vault, ...fontRelative.split("/"));
+
+    // 1) لا خط: null تعني «لا تمرّر fontFamily إطلاقًا».
+    const absent = await run("{}");
+    assert.deepEqual(absent.font, { enabled: false, vaultPath: null, fileFound: false, arabicFontFamily: null });
+
+    // 2) مسجَّل وملفه مفقود: لا جاهزية كاذبة.
+    const missing = await run(registered);
+    assert.equal(missing.font.fileFound, false);
+    assert.equal(missing.font.arabicFontFamily, null);
+
+    // 3) الملف موجود والخيار مطفأ: يميّزها عن «غير مثبَّت» ولا يعيد 4.
+    await fs.writeFile(fontFile, "font");
+    const off = await run(disabled);
+    assert.equal(off.font.fileFound, true, "يجب أن يرى الملف");
+    assert.equal(off.font.enabled, false);
+    assert.equal(off.font.arabicFontFamily, null, "خيار مطفأ لا يعني جاهزية");
+
+    // 4) مفعَّل وملفه موجود: 4.
+    const ready = await run(registered);
+    assert.equal(ready.font.arabicFontFamily, 4);
+
+    // 5) مجلد بمسار الخط ليس خطًا.
+    await fs.rm(fontFile);
+    await fs.mkdir(fontFile, { recursive: true });
+    const folder = await run(registered);
+    assert.equal(folder.font.fileFound, false, "مجلد لا يجوز أن يُعدّ خطًا");
+    assert.equal(folder.font.arabicFontFamily, null);
+    await fs.rm(fontFile, { recursive: true });
+
+    // 6) مسار خارج الخزنة لا يُعدّ جاهزًا.
+    const escape = await run(JSON.stringify({
+      experimentalEnableFourthFont: true, experimantalFourthFont: "../../../etc/passwd",
+    }));
+    assert.equal(escape.font.vaultPath, null, "مسار صاعد يُعدّ غير مسجَّل");
+    assert.equal(escape.font.arabicFontFamily, null);
+
+    // العقد: الخط معلومة لا شرط. حالة الخط لا تحرّك installReady ولا رمز الخروج،
+    // ولا تظهر بين فحوص التثبيت. تُفحص على خزنة مكتملة، وإلا كان التأكيد فراغًا.
+    await fs.writeFile(fontFile, "font");
+    const states = [await run("{}"), await run(disabled), await run(registered)];
+    for (const state of states) {
+      assert.equal(state.installReady, true, "الخط لا يجوز أن يُسقط جاهزية التثبيت");
+      assert.equal(state.exitCode, 0, "الخط لا يجوز أن يغيّر رمز الخروج");
+      assert.ok(!state.installChecks.some((check) => check.name.includes("font")));
+    }
+    assert.deepEqual(states.map((state) => state.font.arabicFontFamily), [null, null, 4],
+      "ومع ذلك يُبلَّغ عن الحالة الحقيقية في الحالات الثلاث");
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+});
+
+// مسار Codex ليس مسار Claude Desktop: مفتاح الموصل إلزامي في الثاني فقط، وسكوت
+// الوثيقة عن الفرق كان يجعل مستخدمًا يتبع خطوات عميل آخر ثم يظن الحزمة معطوبة.
+test("entrypoints document all three clients and isolate the connector step", async () => {
+  const start = await fs.readFile(path.join(root, "START-HERE-AR.md"), "utf8");
+  for (const marker of ["~/.codex/config.toml", "[mcp_servers.excalidraw]", ".mcp.json", "--clients codex", "--clients claude-desktop"]) {
+    assert.ok(start.includes(marker), `START-HERE-AR.md يجب أن يذكر ${marker}`);
+  }
+  // خطوة الموصل يجب أن تكون محصورة بـClaude Desktop نصًّا، لا مطلقة.
+  assert.match(start, /فعّل موصل `excalidraw` بالزر — \*\*Claude Desktop فقط\*\*/);
+  assert.match(start, /Codex وClaude Code لا يحتاجان هذه الخطوة/);
+
+  const claude = await fs.readFile(path.join(root, "CLAUDE.md"), "utf8");
+  assert.match(claude, /AGENTS\.md/, "CLAUDE.md يجب أن يحيل إلى AGENTS.md لا أن ينسخه");
+
+  const agents = await fs.readFile(path.join(root, "AGENTS.md"), "utf8");
+  assert.match(agents, /fonts\.arabicFontFamily/, "AGENTS.md يجب أن يوجّه الوكيل لقراءة الخط من status");
+  assert.match(agents, /OPERATION_TIMEOUT/, "قاعدة عدم إعادة المحاولة يجب أن تكون في ملف يقرأه الوكيل");
+  assert.match(agents, /describe_scene/);
+});
+
+// وثيقة تأمر الوكيل بترقيم الخط بيده تُبطل القاعدة كلها، ولو كانت القاعدة مكتوبة
+// في ملف آخر. الطلب الجاهز في START-HERE هو ما يُلصق فعلًا، فهو الأخطر.
+test("no shipped document tells the agent to hard-code font family 4", async () => {
+  const files = ["START-HERE-AR.md", "AGENTS.md", "PROFESSIONAL-GUIDE-AR.md", "README.md"];
+  for (const name of files) {
+    const text = await fs.readFile(path.join(root, name), "utf8").catch(() => "");
+    for (const [index, line] of text.split("\n").entries()) {
+      const claimsFour = /fontFamily: 4|العائلة الرابعة|الخط الرابع/.test(line);
+      if (!claimsFour) continue;
+      const conditional = /إن |إذا |status|لا تفترض|اقرأ|قد |تلقائيًا|مفعّل/.test(line);
+      assert.ok(conditional, `${name}:${index + 1} يذكر العائلة الرابعة بلا شرط — الوكيل سيفرض 4 على خزنة بلا خط:\n${line}`);
+    }
+  }
+});

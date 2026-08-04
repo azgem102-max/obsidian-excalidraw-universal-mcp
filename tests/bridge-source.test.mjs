@@ -93,10 +93,134 @@ test("element styles reset before each creation and containment is informational
   const source = await fs.readFile(bridgePath, "utf8");
   const style = source.slice(source.indexOf("applyStyle(ea, params)"), source.indexOf("copyBindingTargetsToWorkbench"));
   const inspector = source.slice(source.indexOf("inspectVisualQuality"), source.indexOf("async getCanvasScreenshot"));
-  assert.match(style, /fontSize: 20/);
   assert.match(style, /strokeStyle: "solid"/);
+  assert.match(style, /opacity: 100/);
   assert.match(inspector, /type: "containment", severity: "info"/);
   assert.match(inspector, /warnings = issues\.filter/);
+});
+
+/**
+ * الجسر إضافة Obsidian: `require("obsidian")` لا يوجد في الاختبار، فلا يمكن
+ * استيراده. لكن الفحص النصي وحده لا يكفي — يمرّ على تحويلات تكسر السلوك. فتُستخرج
+ * الدالة وتُنفَّذ فعلًا مقابل بيئة Obsidian مُقلَّدة. سلوك حقيقي، بلا استيراد.
+ */
+function extractMethod(source, name, endMarker, { declarations = "", fixtures = "{}" } = {}) {
+  const body = source.slice(source.indexOf(`  ${name}(`), source.indexOf(endMarker));
+  assert.ok(body.includes(`${name}(`), `تعذّر استخراج ${name}`);
+  // السقالة والدالة في نطاق واحد، وإلا فشل `instanceof` على أصناف مختلفة بلا معنى.
+  return new Function(`
+    ${declarations}
+    return { fixtures: ${fixtures}, build: (deps) => ({ ...deps, ${body.trim()} }) };
+  `)();
+}
+
+// الخط يملكه المستخدم لا المستودع: لا خط في Git، ويضيفه بـ--font فيصبح العائلة
+// الرابعة. وكل رقم ثابت يخسر حالة، وترك المفتاح بلا استعادة يخسر ثالثة.
+test("font family survives creation while element size never leaks", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const { build } = extractMethod(source, "applyStyle", "  copyBindingTargetsToWorkbench");
+  const bridge = build({ baselineFontFamily: undefined });
+  const ea = {
+    style: {
+      strokeColor: "#000", backgroundColor: "transparent", fillStyle: "solid",
+      strokeWidth: 2, strokeStyle: "solid", roughness: 1, opacity: 100,
+      // خزنة فيها خط المستخدم مفعَّل: هذا ما يجب أن ينجو.
+      fontSize: 20, fontFamily: 4, textAlign: "left", verticalAlign: "top",
+      roundness: null, startArrowHead: null, endArrowHead: "arrow",
+    },
+  };
+
+  bridge.applyStyle(ea, { fontSize: 72, fontFamily: 3, strokeStyle: "dashed" });
+  assert.equal(ea.style.fontSize, 72, "التمرير الصريح للمقاس يجب أن يعمل");
+  assert.equal(ea.style.fontFamily, 3, "التمرير الصريح للعائلة يجب أن يعمل");
+
+  bridge.applyStyle(ea, {});
+  assert.equal(ea.style.fontFamily, 4, "خط المستخدم يجب أن ينجو ولا يُفرض 1");
+  assert.equal(ea.style.fontSize, 20, "مقاس عنصر لا يجوز أن يسري على ما بعده");
+  assert.equal(ea.style.strokeStyle, "solid", "التقطيع لا يجوز أن يسري");
+
+  // خزنة بلا خط: يبقى 1 ولا يُفرض 4 — الخطأ المقابل.
+  const plain = build({ baselineFontFamily: undefined });
+  const bare = { style: { ...ea.style, fontFamily: 1, fontSize: 20 } };
+  plain.applyStyle(bare, { fontFamily: 3 });
+  plain.applyStyle(bare, {});
+  assert.equal(bare.style.fontFamily, 1, "خزنة بلا خط تبقى على 1، ولا تُدفع إلى 4");
+});
+
+// «استخدم fontFamily: 4 عندما يكون الخط مفعّلًا» كان شرطًا لا يستطيع الوكيل
+// التحقّق منه: لا أداة تُبلّغ عنه. فيخمّن — وأي تخمين يخسر إحدى الحالتين.
+test("status reports the real Arabic font state so agents never guess", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const status = source.slice(source.indexOf("  status() {"), source.indexOf("  getFontStatus() {"));
+  assert.match(status, /fonts: this\.getFontStatus\(\)/, "status يجب أن يُصدر حالة الخط");
+
+  const FONT = "Excalidraw/Custom Fonts/user-owned.woff2";
+  // TFile مُقلَّد: `getAbstractFileByPath` يعيد المجلدات أيضًا، والمجلد ليس خطًا.
+  const { fixtures, build } = extractMethod(source, "getFontStatus", "  listDrawings(params) {", {
+    declarations: "class TFile {}\nclass TFolder {}",
+    fixtures: "{ file: new TFile(), folder: new TFolder() }",
+  });
+  const read = (settings, tree = {}) =>
+    build({
+      getExcalidrawPlugin: () => {
+        if (!settings) throw new Error("EXCALIDRAW_NOT_LOADED");
+        return { settings };
+      },
+      app: { vault: { getAbstractFileByPath: (p) => tree[p] ?? null } },
+    }).getFontStatus();
+
+  // 1) خط مثبَّت ومفعَّل → 4، وهي الحالة الوحيدة التي تُرجع رقمًا.
+  const ready = read(
+    { experimentalEnableFourthFont: true, experimantalFourthFont: FONT },
+    { [FONT]: fixtures.file },
+  );
+  assert.equal(ready.arabicFontFamily, 4);
+  assert.equal(ready.families.length, 4);
+
+  // 2) مفعَّل والملف مفقود → null. هذه أخطر رجعة ممكنة: 4 على خزنة لا تعرضه.
+  assert.equal(read({ experimentalEnableFourthFont: true, experimantalFourthFont: FONT }).arabicFontFamily, null);
+
+  // 3) الملف موجود والخيار مطفأ → null، مع التمييز عن «غير مثبَّت».
+  const off = read({ experimentalEnableFourthFont: false, experimantalFourthFont: FONT }, { [FONT]: fixtures.file });
+  assert.equal(off.arabicFontFamily, null);
+  assert.equal(off.families.at(-1).fileFound, true, "يجب أن يميّز «مطفأ» من «غير مثبَّت»");
+  assert.equal(off.families.at(-1).enabled, false);
+  assert.match(off.guidance, /مطفأ/, "الإرشاد يجب أن يفرّق «مطفأ» من «غير مثبَّت»");
+
+  // 4) لا إعدادات إطلاقًا → null بلا رمي.
+  assert.equal(read({}).arabicFontFamily, null);
+
+  // 5) مجلد بمسار الخط ليس خطًا.
+  assert.equal(
+    read(
+      { experimentalEnableFourthFont: true, experimantalFourthFont: "Excalidraw/Scripts" },
+      { "Excalidraw/Scripts": fixtures.folder },
+    ).arabicFontFamily,
+    null,
+    "مجلد لا يجوز أن يُعدّ خطًا مثبَّتًا",
+  );
+
+  // 6) مسارات خارج الخزنة لا تُعدّ جاهزة.
+  for (const bad of ["../../../etc/passwd", "/abs/f.ttf", "C:\\fonts\\f.ttf", "fonts\\f.ttf"]) {
+    const result = read({ experimentalEnableFourthFont: true, experimantalFourthFont: bad }, { [bad]: fixtures.file });
+    assert.equal(result.arabicFontFamily, null, `مسار خارج الخزنة يجب ألا يكون جاهزًا: ${bad}`);
+  }
+
+  // 7) إعدادات معطوبة: لا يسقط `status`، ولا يكذب بأن «لا خط مثبَّت».
+  const broken = build({
+    getExcalidrawPlugin: () => ({ get settings() { throw new Error("corrupt"); } }),
+    app: { vault: { getAbstractFileByPath: () => null } },
+  }).getFontStatus();
+  assert.equal(broken.arabicFontFamily, null);
+  assert.equal(broken.families.at(-1).unreadable, true);
+  assert.match(broken.guidance, /مجهولة/, "الحالة المجهولة لا تُعرَض كأنها «لا خط»");
+
+  // 8) إملاء المفتاح upstream فيه خطأ مطبعي أصلي؛ أي «تصحيح» يكسر القراءة صامتًا.
+  const fonts = source.slice(source.indexOf("  getFontStatus() {"), source.indexOf("  listDrawings(params) {"));
+  assert.match(fonts, /experimantalFourthFont/);
+
+  const serverSource = await fs.readFile(path.join(root, "server.mjs"), "utf8");
+  assert.match(serverSource, /fonts\.arabicFontFamily/, "وصف الأداة يجب أن يذكر الحقل");
 });
 
 test("library persistence uses the Obsidian Excalidraw stencil store", async () => {
