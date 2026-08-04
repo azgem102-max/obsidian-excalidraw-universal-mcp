@@ -13,6 +13,14 @@
 5. **32 سكربتًا** — 17 أداة تخطيط أساسية و15 سكربتًا احترافيًا.
 6. إعداد MCP محلي باسم `excalidraw` للعميل المختار.
 
+## الطريقة الأسهل على Windows
+
+بعد فك ضغط المشروع، اضغط مرتين على:
+
+`setup-windows.cmd`
+
+ستظهر نافذة لاختيار خزنة Obsidian، ثم يُثبّت كل شيء ويضبط Claude وCodex تلقائيًا. لا يحتاج المستخدم إلى معرفة المسار أو تعديل أي ملف. وإذا كان Node.js مفقودًا، يطلب الملف الموافقة قبل تثبيت النسخة الرسمية المستقرة.
+
 ## أمر التثبيت الموحد
 
 يتطلب Node.js 18 أو أحدث وObsidian Vault موجودًا مرة واحدة على الأقل:
@@ -24,7 +32,7 @@ node install.mjs --vault "C:\Users\name\Documents\Obsidian Vault" --clients all 
 إذا كان الوكيل يعمل داخل Linux منفصل عن Windows، يشغّل المستخدم من Windows PowerShell داخل مجلد الريبو:
 
 ```powershell
-.\install-on-windows.ps1 -Vault "C:\Users\name\Documents\Obsidian Vault" -Clients "claude-desktop"
+.\install-on-windows.ps1 -Clients "claude-desktop"
 ```
 
 على macOS أو Linux يتغير مسار الـVault فقط:

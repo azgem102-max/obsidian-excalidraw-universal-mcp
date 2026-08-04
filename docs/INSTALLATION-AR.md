@@ -9,6 +9,17 @@
 
 ## التثبيت الموصى به
 
+### Windows من دون أوامر
+
+1. فك ضغط المشروع.
+2. اضغط مرتين على `setup-windows.cmd`.
+3. اختر خزنة Obsidian من النافذة.
+4. بعد النجاح، أعد تشغيل Obsidian وبرنامج الذكاء الاصطناعي مرة واحدة.
+
+يعالج الملف سياسة تشغيل PowerShell تلقائيًا، ولا يطلب من المستخدم كتابة مسار. إذا كان Node.js غير موجود، يطلب الموافقة ثم يستخدم `winget` لتثبيت النسخة الرسمية المستقرة. إذا لم يكن `winget` متاحًا، يفتح صفحة Node.js الرسمية فقط ولا يجري تثبيتًا صامتًا.
+
+### التثبيت من الطرفية
+
 ```bash
 node install.mjs --vault "<VAULT>" --clients all --project-root "."
 ```
@@ -49,7 +60,7 @@ node install.mjs --vault "C:\Users\name\Documents\Obsidian Vault" --clients clau
 نزّل الريبو على Windows، ثم افتح Windows PowerShell داخل مجلده وشغّل:
 
 ```powershell
-.\install-on-windows.ps1 -Vault "C:\Users\name\Documents\Obsidian Vault" -Clients "claude-desktop"
+.\install-on-windows.ps1 -Clients "claude-desktop"
 ```
 
 السكربت يبحث عن `node.exe` على Windows ويشغّل المثبّت بالمسارات الصحيحة. لا يحتاج المستخدم إلى فتح ملف إعداد Claude أو تعديله يدويًا.

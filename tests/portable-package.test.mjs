@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("portable package contains AI entrypoints and pinned official plugins", async () => {
-  for (const name of ["START-HERE-AR.md", "AGENTS.md", "CLAUDE.md", "doctor.mjs", "install-on-windows.ps1", "plugin-versions.json"]) {
+  for (const name of ["START-HERE-AR.md", "AGENTS.md", "CLAUDE.md", "doctor.mjs", "install-on-windows.ps1", "setup-windows.cmd", "plugin-versions.json"]) {
     await fs.access(path.join(root, name));
   }
   const lock = JSON.parse(await fs.readFile(path.join(root, "plugin-versions.json"), "utf8"));
@@ -52,8 +52,22 @@ test("the public package does not redistribute font binaries", async () => {
 
 test("Windows helper uses Windows Node and remains compatible with legacy PowerShell decoding", async () => {
   const helper = await fs.readFile(path.join(root, "install-on-windows.ps1"), "utf8");
-  assert.match(helper, /Get-Command node\.exe/);
+  assert.match(helper, /Find-NodeCommand/);
+  assert.match(helper, /Select-ObsidianVault/);
+  assert.match(helper, /nodeMajor -lt 18/);
+  assert.match(helper, /--project-root/);
   assert.match(helper, /install\.mjs/);
+  assert.doesNotMatch(helper, /[^\x00-\x7F]/);
+});
+
+test("one-click Windows setup is self-contained and asks before installing Node", async () => {
+  const helper = await fs.readFile(path.join(root, "setup-windows.cmd"), "utf8");
+  assert.match(helper, /install-on-windows\.ps1/);
+  assert.match(helper, /ExecutionPolicy Bypass/);
+  assert.match(helper, /choice \/C YN/);
+  assert.match(helper, /OpenJS\.NodeJS\.LTS/);
+  assert.match(helper, /process\.versions\.node/);
+  assert.match(helper, /--accept-package-agreements/);
   assert.doesNotMatch(helper, /[^\x00-\x7F]/);
 });
 

@@ -47,7 +47,19 @@
 - تصدير الرسم بصيغة PNG أو SVG.
 - مراجعة ترتيب الرسم قبل تسليمه.
 
-## الاستخدام السريع
+## أسهل طريقة على Windows
+
+1. ثبّت [Obsidian](https://obsidian.md/) وأنشئ خزنة وافتحها مرة واحدة.
+2. نزّل المشروع من **Code ثم Download ZIP** وفك الضغط عنه.
+3. افتح المجلد واضغط مرتين على **`setup-windows.cmd`**.
+4. اختر مجلد خزنة Obsidian من النافذة، وانتظر ظهور رسالة النجاح.
+5. أغلق وافتح Obsidian وClaude أو Codex مرة واحدة.
+
+هذا كل شيء. لا تحتاج إلى كتابة مسارات أو تعديل ملفات إعدادات. وإذا كان Node.js غير موجود، يسألك الملف أولًا ثم يثبّت نسخته الرسمية المستقرة باستخدام Windows Package Manager. لا يحدث أي تثبيت دون موافقتك.
+
+## الاستخدام بالأوامر
+
+استخدم هذا القسم فقط إذا كنت تفضّل الطرفية أو تعمل على macOS أو Linux.
 
 ### 1. جهّز البرامج
 
@@ -56,7 +68,7 @@
 - [Obsidian](https://obsidian.md/)
 - [Node.js](https://nodejs.org/) إصدار 18 أو أحدث
 
-بعدها أنشئ خزنة Obsidian وافتحها مرة واحدة.
+بعدها أنشئ خزنة Obsidian وافتحها مرة واحدة. على Windows يمكنك تجاوز بقية الأوامر واستخدام `setup-windows.cmd` كما في الأعلى.
 
 ### 2. حمّل المشروع
 
@@ -77,10 +89,10 @@ cd obsidian-excalidraw-universal-mcp
 node install.mjs --vault "C:\مسار\خزنة Obsidian" --clients all --project-root "."
 ```
 
-إذا كان المساعد يعمل في جلسة Linux منفصلة ولا يستطيع الوصول إلى إعدادات Windows، افتح Windows PowerShell داخل مجلد المشروع وشغّل:
+إذا كان المساعد يعمل في جلسة Linux منفصلة ولا يستطيع الوصول إلى إعدادات Windows، شغّل `setup-windows.cmd` من مجلد المشروع على Windows. ويمكن أيضًا استخدام الأمر التالي:
 
 ```powershell
-.\install-on-windows.ps1 -Vault "C:\مسار\خزنة Obsidian" -Clients "claude-desktop"
+.\install-on-windows.ps1 -Clients "claude-desktop"
 ```
 
 على macOS أو Linux:

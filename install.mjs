@@ -56,7 +56,7 @@ function usage() {
     "",
     "WSL: Claude Desktop on Windows receives Windows Node and Windows paths automatically.",
     "     Keep the repository and Vault on a mounted Windows drive such as /mnt/c.",
-    "Linux agent + Windows desktop: run install-on-windows.ps1 from Windows PowerShell.",
+    "Linux agent + Windows desktop: double-click setup-windows.cmd on Windows.",
   ].join("\n");
 }
 
@@ -425,7 +425,7 @@ if (shouldBlockCrossHostClaudeDesktop({
     "جلسة Linux الحالية منفصلة عن Claude Desktop على Windows، لذلك لن يكتب المثبّت مسارات Linux داخل إعداد Windows.",
     "نزّل الريبو على Windows ثم شغّل هذا الأمر في Windows PowerShell:",
     "",
-    ".\\install-on-windows.ps1 -Vault 'C:\\path\\to\\Obsidian Vault' -Clients 'claude-desktop'",
+    "Double-click setup-windows.cmd on Windows and select your Obsidian vault.",
   ].join("\n"));
 }
 

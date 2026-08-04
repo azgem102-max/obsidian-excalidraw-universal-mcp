@@ -22,7 +22,7 @@ Excalidraw Extras مفقودة أو غير مفعلة. أعد تشغيل الم�
 
 إذا كان Claude Code يعمل داخل WSL وClaude Desktop على Windows، تأكد أن الريبو والـVault موجودان تحت `/mnt/c` أو قرص Windows آخر. أعد تشغيل المثبّت؛ سيكتب `node.exe` ومسارات Windows داخل إعداد Claude Desktop. لا تنسخ مسارات `/home/...` إلى ملف Claude على Windows.
 
-إذا كانت جلسة Claude عبارة عن Linux منفصل لا يحتوي `/mnt/c`، شغّل `install-on-windows.ps1` من Windows PowerShell. لا تحاول منح الحاوية مسار `%APPDATA%` ولا تعدّل JSON يدويًا.
+إذا كانت جلسة Claude عبارة عن Linux منفصل لا يحتوي `/mnt/c`، شغّل `setup-windows.cmd` من مجلد المشروع على Windows واختر الـVault من النافذة. لا تحاول منح الحاوية مسار `%APPDATA%` ولا تعدّل JSON يدويًا.
 - لا تضع مسارًا نسبيًا للخادم في إعدادات عميل خارج الريبو؛ المثبت يكتب مسارًا مطلقًا.
 
 ## أمان البيانات
