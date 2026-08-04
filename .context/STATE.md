@@ -16,7 +16,7 @@
 - نتائج الاختبار الكاملة في `ACCEPTANCE-TEST-MATRIX.md`، وخطة النشر في `.context/plans/2026-08-03-public-repository.md`.
 - اجتازت نسخة النشر المستقلة فحص `npm run check`: ‏19/19 اختبارًا و59 أداة، ولم يُعثر على رموز وصول أو خطوط خاصة أو بيانات Vault.
 - المستودع العام: `https://github.com/azgem102-max/obsidian-excalidraw-universal-mcp`.
-- أُعيدت كتابة واجهة `README.md` بلغة عربية بسيطة وعنوان مباشر: «Obsidian وExcalidraw مع Claude وCodex»، مع التركيز على دعم السكربتات والإشارة إلى مشروع `zsviczian/obsidian-excalidraw-plugin` ومكتبته.
+- أُعيدت كتابة واجهة `README.md` بلغة عربية بسيطة وعنوان مباشر، مع قسم واضح ينسب النتيجة إلى Obsidian وExcalidraw for Obsidian وExtras ومكتبة السكربتات وExcalidraw core ومرجع MCP، بروابط مباشرة لكل مشروع.
 
 ## التالي
 

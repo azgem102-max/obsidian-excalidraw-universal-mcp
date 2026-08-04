@@ -23,6 +23,19 @@
 
 هذا العمل مبني ليتكامل مع مشروع [Excalidraw for Obsidian من @zsviczian](https://github.com/zsviczian/obsidian-excalidraw-plugin)، ويستفيد من [مكتبة السكربتات المعروفة للمشروع](https://github.com/zsviczian/obsidian-excalidraw-plugin/wiki/Excalidraw-Script-Engine-scripts-library).
 
+## المشاريع والإضافات المستخدمة
+
+النتيجة الموجودة هنا تعتمد على هذه المشاريع، ولكل واحد منها دور مهم:
+
+- [Obsidian](https://obsidian.md/) — البرنامج الذي تُحفظ داخله الملاحظات والرسومات.
+- [Excalidraw for Obsidian من @zsviczian](https://github.com/zsviczian/obsidian-excalidraw-plugin) — إضافة الرسم الأساسية ومحرك تشغيل السكربتات.
+- [Excalidraw Extras من @zsviczian](https://github.com/zsviczian/obsidian-excalidraw-extras) — يضيف ميزات الرسم المتقدمة مثل Mermaid والمعادلات.
+- [مكتبة سكربتات Excalidraw](https://github.com/zsviczian/obsidian-excalidraw-plugin/wiki/Excalidraw-Script-Engine-scripts-library) — مصدر السكربتات المعروفة التي توسّع إمكانات الرسم والتنظيم.
+- [Excalidraw](https://github.com/excalidraw/excalidraw) — محرك الرسم المفتوح الذي تقوم عليه التجربة.
+- [mcp_excalidraw من @yctimlin](https://github.com/yctimlin/mcp_excalidraw) — المشروع المرجعي الذي بُني عليه توافق أدوات MCP.
+
+هذا المشروع يجمع هذه الأجزاء ويجهّزها لتعمل مع Claude وCodex بطريقة أبسط، ولا ينسب تطويرها الأصلي لنفسه.
+
 ## ماذا يستطيع أن يفعل؟
 
 - كتابة الملاحظات وتنظيمها والبحث فيها.
