@@ -1,0 +1,13 @@
+node_modules/
+.tmp/
+*.log
+*.bak
+.mcp.json
+.env
+.env.*
+!*.example
+coverage/
+dist/
+assets/fonts/*
+!assets/fonts/README.md
+

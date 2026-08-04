@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "testedWith": {
+    "obsidian": "1.13.4",
+    "node": ">=18"
+  },
+  "plugins": [
+    {
+      "id": "obsidian-excalidraw-plugin",
+      "name": "Excalidraw",
+      "repo": "zsviczian/obsidian-excalidraw-plugin",
+      "version": "2.25.3",
+      "license": "AGPL-3.0",
+      "files": [
+        { "name": "main.js" },
+        { "name": "manifest.json" },
+        { "name": "styles.css", "optional": true }
+      ]
+    },
+    {
+      "id": "excalidraw-extras",
+      "name": "Excalidraw Extras",
+      "repo": "zsviczian/obsidian-excalidraw-extras",
+      "version": "0.0.15",
+      "license": "AGPL-3.0",
+      "files": [
+        { "name": "main.js" },
+        { "name": "manifest.json" },
+        { "name": "styles.css", "optional": true }
+      ]
+    }
+  ]
+}
