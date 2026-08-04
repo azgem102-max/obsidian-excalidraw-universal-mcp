@@ -403,7 +403,8 @@ const tools = [
   },
   {
     name: "status",
-    description: "تحقق من Obsidian وExcalidraw والرسم النشط وإصدار الجسر.",
+    description:
+      "تحقق من Obsidian وExcalidraw والرسم النشط وإصدار الجسر. يعيد أيضًا fonts.arabicFontFamily: مرّره في fontFamily للنص العربي، وإن كان null فلا تمرّر fontFamily إطلاقًا.",
     inputSchema: objectSchema(),
   },
   {

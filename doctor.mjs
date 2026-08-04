@@ -30,6 +30,7 @@ const REQUIRED_PLUGINS = [
   { id: "obsidian-excalidraw-mcp-bridge", label: "MCP Bridge" },
 ];
 const BRIDGE_ID = "obsidian-excalidraw-mcp-bridge";
+const EXCALIDRAW_ID = "obsidian-excalidraw-plugin";
 const MIN_NODE = 18;
 
 const T = {
@@ -53,6 +54,10 @@ const T = {
     liveMismatch: (a, b) => `النسخة الحية ${b} لا تطابق المثبَّتة ${a}. أعد تشغيل Obsidian.`,
     nodeOld: (v) => `يتطلب Node ${MIN_NODE} أو أحدث. الموجود ${v}.`,
     versionDrift: (id, got, want) => `${id}: المثبَّت ${got} والمقفول ${want}. شغّل المثبّت بـ--force-plugin-versions إن أردت التطابق.`,
+    fontReady: (name) => `الخط العربي جاهز (${name}) — مرّر fontFamily: 4.`,
+    fontMissingFile: (p) => `الخط الرابع مسجَّل وملفه مفقود: ${p}. لا تمرّر fontFamily؛ أعد التثبيت بـ--font.`,
+    fontDisabled: (name) => `ملف الخط موجود (${name}) وخيار الخط الرابع مطفأ في إعدادات Excalidraw — فعّله ثم أعد الفحص.`,
+    fontAbsent: "لا خط عربي مثبَّت — اختياري. لا تمرّر fontFamily إطلاقًا. لإضافة خطك: node install.mjs --font \"<path>\".",
   },
   en: {
     head: "Obsidian + Excalidraw MCP check",
@@ -74,6 +79,10 @@ const T = {
     liveMismatch: (a, b) => `Live version ${b} does not match installed ${a}. Restart Obsidian.`,
     nodeOld: (v) => `Requires Node ${MIN_NODE} or newer. Found ${v}.`,
     versionDrift: (id, got, want) => `${id}: installed ${got}, pinned ${want}. Run the installer with --force-plugin-versions to align.`,
+    fontReady: (name) => `Arabic font ready (${name}) - pass fontFamily: 4.`,
+    fontMissingFile: (p) => `Fourth font registered but file missing: ${p}. Do NOT pass fontFamily; reinstall with --font.`,
+    fontDisabled: (name) => `Font file present (${name}) but the fourth-font option is OFF in Excalidraw settings - enable it and re-run.`,
+    fontAbsent: "No Arabic font installed - optional. Do NOT pass fontFamily at all. To add yours: node install.mjs --font \"<path>\".",
   },
 };
 
@@ -156,6 +165,34 @@ installChecks.push({ name: "scripts:professional", ok: proCount >= 15, count: pr
 const installReady = installChecks.every((c) => c.ok);
 const installedBridgeVersion = installChecks.find((c) => c.name === `plugin:${BRIDGE_ID}`)?.version || null;
 
+// الخط العربي: معلومة لا شرط. المستودع لا يوزّع خطًا، والمستخدم يضيف خطه بنفسه
+// بـ--font. لكن سكوت الطبيب عنه كان يترك الوكيل يخمّن رقم fontFamily. يُقرأ من
+// إعدادات Excalidraw على القرص فيعمل بلا Obsidian مفتوح.
+const excalidrawSettings = await readJson(
+  path.join(obsidian, "plugins", EXCALIDRAW_ID, "data.json"),
+  {},
+);
+// إملاء المفتاح كما هو upstream — لا تصحّحه.
+const rawFontPath = excalidrawSettings?.experimantalFourthFont;
+// مسار داخل الخزنة فقط. مطلقًا أو صاعدًا بـ`..` أو بشرطة خلفية لا تحمّله الإضافة،
+// فقول «جاهز» عنه كذب — ونفس الشرط في الجسر حتى لا يختلف التقريران.
+const fourthFontPath =
+  typeof rawFontPath === "string" && rawFontPath && !rawFontPath.startsWith("/") &&
+  !rawFontPath.includes("\\") && !rawFontPath.split("/").includes("..") && !/^[A-Za-z]:/.test(rawFontPath)
+    ? rawFontPath
+    : null;
+const fourthFontEnabled = excalidrawSettings?.experimentalEnableFourthFont === true;
+// ملف لا مجلد: `fs.access` ينجح على المجلدات، ومجلد ليس خطًا.
+const fourthFontFound = fourthFontPath
+  ? await fs.stat(path.join(vault, ...fourthFontPath.split("/"))).then((s) => s.isFile(), () => false)
+  : false;
+const font = {
+  enabled: fourthFontEnabled,
+  vaultPath: fourthFontPath,
+  fileFound: fourthFontFound,
+  arabicFontFamily: fourthFontEnabled && fourthFontFound ? 4 : null,
+};
+
 // 2) الفحص الحيّ — منفصل تمامًا
 const bridgeData = await readJson(path.join(obsidian, "plugins", BRIDGE_ID, "data.json"));
 let bridge = { state: "skipped", detail: null, liveVersion: null };
@@ -205,8 +242,17 @@ const report = {
   node: process.version,
   vault,
   installChecks,
+  font,
   bridge: { state: bridge.state, installedVersion: installedBridgeVersion, liveVersion: bridge.liveVersion, message: liveMessage, status: bridge.status ?? null },
 };
+
+const fontMessage = font.arabicFontFamily
+  ? t.fontReady(font.vaultPath.split("/").pop())
+  : font.vaultPath && !font.fileFound
+    ? t.fontMissingFile(font.vaultPath)
+    : font.fileFound && !font.enabled
+      ? t.fontDisabled(font.vaultPath.split("/").pop())
+      : t.fontAbsent;
 
 if (args.json) {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -226,6 +272,7 @@ if (args.json) {
       process.stdout.write(`  ${mark} ${label}: ${c.count}/${c.expected}\n`);
     }
   }
+  process.stdout.write(`  ${font.arabicFontFamily ? "✓" : "–"} ${fontMessage}\n`);
   process.stdout.write(`  ${installReady ? "→ " + t.installOk : "→ " + t.installBad}\n`);
   process.stdout.write(`\n${t.live}\n  ${liveReady ? "✓" : ["unreachable-host","skipped"].includes(bridge.state) ? "–" : "✗"} ${liveMessage}\n`);
   for (const c of installChecks.filter((x) => x.versionDrift)) {

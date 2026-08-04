@@ -72,6 +72,9 @@ function nestedValue(object, dottedKey) {
 
 class ObsidianExcalidrawMcpBridge extends Plugin {
   async onload() {
+    // عائلة الخط الأساسية: تُلتقط في أول `applyStyle` قبل أي تعديل من الجسر، ثم
+    // تُستعاد إليها كل عنصر. `undefined` تعني «لم تُلتقط بعد» — لا «الافتراضي 1».
+    this.baselineFontFamily = undefined;
     const stored = (await this.loadData()) || {};
     this.settings = {
       port: Number.isInteger(stored.port) ? stored.port : DEFAULT_PORT,
@@ -442,6 +445,75 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       activeDrawing,
       elementCount,
       port: this.settings.port,
+      fonts: this.getFontStatus(),
+    };
+  }
+
+  // الخط المخصّص يملكه المستخدم: يضيفه بـ`--font` فيصبح العائلة الرابعة. وكان
+  // `AGENTS.md` يقول «استخدم fontFamily: 4 عندما يكون الخط مفعّلًا» — وهو شرط لا
+  // يستطيع الوكيل التحقّق منه، فلا أداة تُبلّغ عنه. فيخمّن: إن فرض 4 على خزنة بلا
+  // خط ضاع النص، وإن تركه ورث ما تفرضه الحالة العامة. هنا يقرأ الحقيقة.
+  getFontStatus() {
+    const families = [
+      { fontFamily: 1, label: "Hand-drawn (Virgil)", available: true, supportsArabic: false },
+      { fontFamily: 2, label: "Normal (Helvetica)", available: true, supportsArabic: false },
+      { fontFamily: 3, label: "Code (Cascadia)", available: true, supportsArabic: false },
+    ];
+    let fourth = {
+      fontFamily: 4,
+      label: null,
+      available: false,
+      supportsArabic: true,
+      enabled: false,
+      fileFound: false,
+      vaultPath: null,
+    };
+    try {
+      const settings = this.getExcalidrawPlugin().settings || {};
+      // مفتاح الإضافة الأصلي مكتوب بهذا الإملاء upstream؛ لا تصحّحه.
+      const raw = settings.experimantalFourthFont;
+      // مسار داخل الخزنة فقط: مطلقًا أو صاعدًا بـ`..` أو بشرطة خلفية لا تحمّله
+      // الإضافة، فالإبلاغ عنه «جاهزًا» كذب. عُدّه غير مسجَّل.
+      const vaultPath =
+        typeof raw === "string" && raw && !raw.startsWith("/") && !raw.includes("\\") &&
+        !raw.split("/").includes("..") && !/^[A-Za-z]:/.test(raw)
+          ? raw
+          : null;
+      const enabled = settings.experimentalEnableFourthFont === true;
+      // ملف لا مجلد: `getAbstractFileByPath` يعيد TFolder أيضًا، ومجلد ليس خطًا.
+      const resolved = vaultPath ? this.app.vault.getAbstractFileByPath(vaultPath) : null;
+      const fileFound = resolved instanceof TFile;
+      fourth = {
+        fontFamily: 4,
+        label: vaultPath ? vaultPath.split("/").pop() : null,
+        available: enabled && fileFound,
+        supportsArabic: true,
+        enabled,
+        fileFound,
+        vaultPath,
+      };
+    } catch (error) {
+      // مسار غير متوقّع: `status()` يرمي EXCALIDRAW_NOT_LOADED قبل الوصول إلى هنا،
+      // فالحالة الواقعية الوحيدة هي إعدادات معطوبة. لا نرمي — لأن `status` أداة
+      // الجاهزية ولا يجوز أن تسقط بسبب الخط — لكن لا نكتم السبب أيضًا: الإبلاغ
+      // بـ«لا خط مثبَّت» عن خزنة فيها خط سليم كذبٌ يُنقل إلى المستخدم.
+      fourth = { ...fourth, unreadable: true, error: String(error?.message || error) };
+    }
+    const arabicFontFamily = fourth.available ? 4 : null;
+    return {
+      families: [...families, fourth],
+      // ‏هذا هو الحقل الذي يقرأه الوكيل. `null` تعني: لا تمرّر fontFamily إطلاقًا
+      // واترك افتراض الخزنة. الجسر لا يفرض رقمًا في أي حالة.
+      arabicFontFamily,
+      guidance: fourth.unreadable
+        ? `تعذّر قراءة إعدادات الخط (${fourth.error}). لا تمرّر fontFamily، ولا تستنتج أن الخط غير مثبَّت — الحالة مجهولة.`
+        : fourth.available
+          ? `مرّر fontFamily: 4 للنص العربي (${fourth.label}).`
+          : fourth.vaultPath && !fourth.fileFound
+            ? `الخط الرابع مسجَّل في الإعدادات وملفه مفقود من الخزنة أو ليس ملفًا: ${fourth.vaultPath}. لا تمرّر fontFamily؛ أعِد التثبيت بـ--font.`
+            : fourth.fileFound && !fourth.enabled
+              ? `ملف الخط موجود (${fourth.label}) وخيار الخط الرابع مطفأ في إعدادات Excalidraw. لا تمرّر fontFamily حتى يفعّله المستخدم.`
+              : "لا خط عربي مثبَّت. لا تمرّر fontFamily إطلاقًا؛ العائلات 1-3 لا تشكّل العربية. ثبّت خطًا يملكه المستخدم بـ node install.mjs --font \"<path>\".",
     };
   }
 
@@ -967,6 +1039,7 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
   applyStyle(ea, params) {
     // ea.style حالة عامة تبقى بين النداءات: عنصر متقطع واحد كان يجعل كل ما بعده
     // متقطعًا بشفافية موروثة. أعِد الافتراضيات القياسية ثم طبّق المطلوب فقط.
+    //
     const canonical = {
       strokeColor: "#1e1e1e",
       backgroundColor: "transparent",
@@ -976,12 +1049,24 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       roughness: 1,
       opacity: 100,
       fontSize: 20,
-      fontFamily: 1,
       textAlign: "left",
       verticalAlign: "top",
     };
     for (const [key, value] of Object.entries(canonical)) {
       if (key in ea.style) ea.style[key] = value;
+    }
+
+    // ‏fontFamily وحده لا يُستعاد إلى رقم ثابت — يُستعاد إلى ما كان عليه **قبل أن
+    // يلمسه الجسر**. السبب أن العائلة الرابعة يملكها المستخدم لا المستودع: يضيف
+    // خطه بـ`--font` فتحمله الخزنة افتراضًا. وكل رقم ثابت يخسر حالة: فرض `1`
+    // يُلغي خط من ثبّته فيخرج نصه العربي بحروف مفكّكة، وفرض `4` يضيّع النص على
+    // خزنة بلا خط. وترك المفتاح دون استعادة يخسر حالة ثالثة: عنصر واحد يمرّر
+    // `fontFamily: 3` يجعل كل ما بعده بالخط نفسه — وهو تسرّب الحالة الذي وُضعت
+    // هذه الاستعادة لمنعه أصلًا. فتُلتقط القيمة الأساسية مرة واحدة قبل أي تعديل،
+    // وإليها تعود. والوكيل يقرأ الرقم الصحيح من `status.fonts.arabicFontFamily`.
+    if ("fontFamily" in ea.style) {
+      if (this.baselineFontFamily === undefined) this.baselineFontFamily = ea.style.fontFamily;
+      ea.style.fontFamily = this.baselineFontFamily;
     }
     ea.style.startArrowHead = null;
     ea.style.endArrowHead = "arrow";
