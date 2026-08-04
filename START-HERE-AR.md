@@ -21,6 +21,12 @@
 node install.mjs --vault "C:\Users\name\Documents\Obsidian Vault" --clients all --project-root "."
 ```
 
+إذا كان الوكيل يعمل داخل Linux منفصل عن Windows، يشغّل المستخدم من Windows PowerShell داخل مجلد الريبو:
+
+```powershell
+.\install-on-windows.ps1 -Vault "C:\Users\name\Documents\Obsidian Vault" -Clients "claude-desktop"
+```
+
 على macOS أو Linux يتغير مسار الـVault فقط:
 
 ```bash
@@ -53,4 +59,3 @@ node doctor.mjs --vault "C:\path\to\Vault"
 > افتح ملاحظة جديدة باسم «تجربة النظام»، اكتب فيها ملخصًا عربيًا، ثم أنشئ رسم Excalidraw منظمًا يوضح الفكرة. استخدم خط العائلة الرابعة، التقط صورة للرسم، أصلح أي تداخل، ثم احفظه.
 
 لا يحتاج المستخدم النهائي إلى تشغيل `live-acceptance.mjs`. هذا اختبار تطوير وصيانة، أما `doctor.mjs` فهو فحص الجاهزية اليومي.
-

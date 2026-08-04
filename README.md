@@ -67,12 +67,20 @@ cd obsidian-excalidraw-universal-mcp
 
 يمكنك أيضًا تنزيله من زر **Code ثم Download ZIP** في GitHub.
 
+إذا كان Claude يعمل من خلال WSL، احفظ المشروع والخزنة على قرص Windows مثل `C:`. المثبّت يتعرف على WSL ويضع مسارات Windows الصحيحة داخل Claude Desktop تلقائيًا، ولن يكتب له مسارات Linux غير صالحة.
+
 ### 3. شغّل المثبّت
 
 على Windows:
 
 ```powershell
 node install.mjs --vault "C:\مسار\خزنة Obsidian" --clients all --project-root "."
+```
+
+إذا كان المساعد يعمل في جلسة Linux منفصلة ولا يستطيع الوصول إلى إعدادات Windows، افتح Windows PowerShell داخل مجلد المشروع وشغّل:
+
+```powershell
+.\install-on-windows.ps1 -Vault "C:\مسار\خزنة Obsidian" -Clients "claude-desktop"
 ```
 
 على macOS أو Linux:
@@ -82,6 +90,8 @@ node install.mjs --vault "$HOME/Documents/Obsidian Vault" --clients all --projec
 ```
 
 المثبّت يضيف Excalidraw وملحقاته والسكربتات، ثم يجهّز الاتصال مع Claude وCodex دون حذف إعداداتك الحالية.
+
+إذا منعت صلاحيات Claude الوصول إلى إعدادات Windows، سيعرض المثبّت أمرًا جاهزًا لتشغيله مرة واحدة في Windows PowerShell بدل ترك إعداد ناقص.
 
 ### 4. أعد التشغيل
 

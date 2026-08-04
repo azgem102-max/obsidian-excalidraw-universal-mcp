@@ -1,13 +1,25 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  isWindowsAbsolutePath,
+  isWslEnvironment,
+  localPathInput,
+  resolveWslClaudeDesktopTarget,
+  shouldBlockCrossHostClaudeDesktop,
+  wslPathToWindows,
+} from "./platform-paths.mjs";
 
 const BRIDGE_PLUGIN_ID = "obsidian-excalidraw-mcp-bridge";
 const OFFICIAL_PLUGIN_IDS = ["obsidian-excalidraw-plugin", "excalidraw-extras"];
+const execFileAsync = promisify(execFile);
+const RUNNING_IN_WSL = isWslEnvironment();
 
 function parseArguments(argv) {
   const values = {};
@@ -41,6 +53,10 @@ function usage() {
     "  --offline                      Do not download; require official plugins to exist",
     "  --skip-official                Do not install/check official plugins",
     "  --help                         Show this help",
+    "",
+    "WSL: Claude Desktop on Windows receives Windows Node and Windows paths automatically.",
+    "     Keep the repository and Vault on a mounted Windows drive such as /mnt/c.",
+    "Linux agent + Windows desktop: run install-on-windows.ps1 from Windows PowerShell.",
   ].join("\n");
 }
 
@@ -224,7 +240,7 @@ async function installContent(sourceRoot, vaultPath) {
 
 async function installLocalFont(fontInput, vaultPath, obsidianPath) {
   if (!fontInput) return null;
-  const fontPath = path.resolve(fontInput);
+  const fontPath = path.resolve(localPathInput(fontInput, { wsl: RUNNING_IN_WSL }));
   const extension = path.extname(fontPath).toLowerCase();
   if (![".otf", ".ttf", ".woff", ".woff2"].includes(extension)) {
     throw new Error("صيغة الخط يجب أن تكون otf أو ttf أو woff أو woff2");
@@ -244,17 +260,17 @@ async function installLocalFont(fontInput, vaultPath, obsidianPath) {
   return { source: fontPath, destination, vaultPath: relative };
 }
 
-function mcpServerConfig(serverPath, vaultPath) {
-  return { command: process.execPath, args: [serverPath], env: { OBSIDIAN_VAULT_PATH: vaultPath } };
+function mcpServerConfig(serverPath, vaultPath, command = process.execPath) {
+  return { command, args: [serverPath], env: { OBSIDIAN_VAULT_PATH: vaultPath } };
 }
 
-async function configureJsonClient(configPath, serverPath, vaultPath) {
+async function configureJsonClient(configPath, serverConfig) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await backupOnce(configPath, BRIDGE_PLUGIN_ID);
   const config = await readJson(configPath, {});
   if (!config.mcpServers || typeof config.mcpServers !== "object") config.mcpServers = {};
   delete config.mcpServers["obsidian-excalidraw"];
-  config.mcpServers.excalidraw = mcpServerConfig(serverPath, vaultPath);
+  config.mcpServers.excalidraw = serverConfig;
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return configPath;
 }
@@ -282,26 +298,108 @@ function defaultClaudeDesktopConfig() {
   return path.join(os.homedir(), ".config", "Claude", "claude_desktop_config.json");
 }
 
+async function windowsPowerShellValue(expression, label) {
+  try {
+    const { stdout } = await execFileAsync(
+      process.env.EXCALIDRAW_MCP_WINDOWS_POWERSHELL || "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", expression],
+      { encoding: "utf8", timeout: 10_000, windowsHide: true },
+    );
+    const value = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
+    if (!value) throw new Error("empty output");
+    return value;
+  } catch (error) {
+    throw new Error(`تعذر اكتشاف ${label} من WSL: ${error.message}`);
+  }
+}
+
+async function resolveWslWindowsAppData() {
+  if (process.env.EXCALIDRAW_MCP_WINDOWS_APPDATA) return process.env.EXCALIDRAW_MCP_WINDOWS_APPDATA;
+  return windowsPowerShellValue("[Console]::OutputEncoding=[Text.Encoding]::UTF8; $env:APPDATA", "مجلد APPDATA في Windows");
+}
+
+async function resolveWslWindowsNode() {
+  if (process.env.EXCALIDRAW_MCP_WINDOWS_NODE) return process.env.EXCALIDRAW_MCP_WINDOWS_NODE;
+  return windowsPowerShellValue(
+    "[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Command node.exe -ErrorAction Stop).Source",
+    "Node.js الخاص بـWindows",
+  );
+}
+
+function powershellLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function wslManualClaudeCommand(sourceRoot, vaultPath, target) {
+  const sourceWindowsPath = wslPathToWindows(sourceRoot);
+  const vaultWindowsPath = wslPathToWindows(vaultPath);
+  return [
+    `Set-Location -LiteralPath ${powershellLiteral(sourceWindowsPath)}`,
+    `& ${powershellLiteral(target.serverConfig.command)} '.\\install.mjs' --vault ${powershellLiteral(vaultWindowsPath)} --clients 'claude-desktop' --claude-desktop-config ${powershellLiteral(target.configDisplayPath)}`,
+  ].join("\n");
+}
+
+async function wslClaudeDesktopTarget(args, sourceRoot, vaultPath) {
+  const rawConfigPath = args["claude-desktop-config"];
+  const configPath = rawConfigPath
+    ? (isWindowsAbsolutePath(rawConfigPath)
+      ? rawConfigPath
+      : path.resolve(localPathInput(rawConfigPath, { wsl: true })))
+    : null;
+  return resolveWslClaudeDesktopTarget({
+    sourceRoot,
+    vaultPath,
+    configPath,
+    windowsAppData: await resolveWslWindowsAppData(),
+    windowsNode: await resolveWslWindowsNode(),
+  });
+}
+
 function requestedClients(value) {
   const raw = String(value || "project").split(",").map((item) => item.trim()).filter(Boolean);
   if (raw.includes("all")) return new Set(["project", "codex", "claude-desktop"]);
   return new Set(raw);
 }
 
-async function configureClients(args, sourceRoot, serverPath, vaultPath) {
+async function configureClients(args, sourceRoot, serverPath, vaultPath, preparedWslClaudeDesktopTarget = null) {
   const clients = requestedClients(args.clients);
   const configured = {};
   if (clients.has("project")) {
-    const projectRoot = path.resolve(args["project-root"] || process.cwd());
-    configured.project = await configureJsonClient(path.join(projectRoot, ".mcp.json"), serverPath, vaultPath);
+    const projectRoot = path.resolve(localPathInput(args["project-root"] || process.cwd(), { wsl: RUNNING_IN_WSL }));
+    configured.project = await configureJsonClient(
+      path.join(projectRoot, ".mcp.json"),
+      mcpServerConfig(serverPath, vaultPath),
+    );
   }
   if (clients.has("codex")) {
-    const codexConfig = path.resolve(args["codex-config"] || path.join(os.homedir(), ".codex", "config.toml"));
+    const codexConfig = path.resolve(localPathInput(
+      args["codex-config"] || path.join(os.homedir(), ".codex", "config.toml"),
+      { wsl: RUNNING_IN_WSL },
+    ));
     configured.codex = await configureCodex(codexConfig, serverPath, vaultPath);
   }
   if (clients.has("claude-desktop")) {
-    const claudeConfig = path.resolve(args["claude-desktop-config"] || defaultClaudeDesktopConfig());
-    configured.claudeDesktop = await configureJsonClient(claudeConfig, serverPath, vaultPath);
+    if (RUNNING_IN_WSL) {
+      const target = preparedWslClaudeDesktopTarget || await wslClaudeDesktopTarget(args, sourceRoot, vaultPath);
+      try {
+        await configureJsonClient(target.configAccessPath, target.serverConfig);
+      } catch (error) {
+        throw new Error([
+          `تعذر تحديث Claude Desktop على Windows من WSL: ${error.message}`,
+          "شغّل الأمر التالي مرة واحدة في Windows PowerShell:",
+          "",
+          wslManualClaudeCommand(sourceRoot, vaultPath, target),
+        ].join("\n"));
+      }
+      configured.claudeDesktop = target.configDisplayPath;
+      configured.claudeDesktopHost = "windows-from-wsl";
+    } else {
+      const claudeConfig = path.resolve(args["claude-desktop-config"] || defaultClaudeDesktopConfig());
+      configured.claudeDesktop = await configureJsonClient(
+        claudeConfig,
+        mcpServerConfig(serverPath, vaultPath),
+      );
+    }
   }
   configured.instructions = path.join(sourceRoot, "CLAUDE.md");
   return configured;
@@ -317,10 +415,27 @@ if (!args.vault) {
   process.exit(2);
 }
 
+const selectedClients = requestedClients(args.clients);
+if (shouldBlockCrossHostClaudeDesktop({
+  wsl: RUNNING_IN_WSL,
+  claudeDesktopSelected: selectedClients.has("claude-desktop"),
+  explicitConfig: Boolean(args["claude-desktop-config"]),
+})) {
+  throw new Error([
+    "جلسة Linux الحالية منفصلة عن Claude Desktop على Windows، لذلك لن يكتب المثبّت مسارات Linux داخل إعداد Windows.",
+    "نزّل الريبو على Windows ثم شغّل هذا الأمر في Windows PowerShell:",
+    "",
+    ".\\install-on-windows.ps1 -Vault 'C:\\path\\to\\Obsidian Vault' -Clients 'claude-desktop'",
+  ].join("\n"));
+}
+
 const sourceRoot = path.dirname(fileURLToPath(import.meta.url));
-const vaultPath = path.resolve(args.vault);
+const vaultPath = path.resolve(localPathInput(args.vault, { wsl: RUNNING_IN_WSL }));
 const obsidianPath = await ensureVault(vaultPath);
 const serverPath = path.join(sourceRoot, "server.mjs");
+const preparedWslClaudeDesktopTarget = RUNNING_IN_WSL && selectedClients.has("claude-desktop")
+  ? await wslClaudeDesktopTarget(args, sourceRoot, vaultPath)
+  : null;
 const officialPlugins = await installOfficialPlugins(sourceRoot, obsidianPath, {
   force: args["force-plugin-versions"] === true,
   offline: args.offline === true,
@@ -330,7 +445,13 @@ const bridgePath = await installBridge(path.join(sourceRoot, "obsidian-plugin"),
 const enabledPluginsPath = await enablePlugins(obsidianPath);
 const content = await installContent(sourceRoot, vaultPath);
 const font = await installLocalFont(args.font, vaultPath, obsidianPath);
-const clients = await configureClients(args, sourceRoot, serverPath, vaultPath);
+const clients = await configureClients(
+  args,
+  sourceRoot,
+  serverPath,
+  vaultPath,
+  preparedWslClaudeDesktopTarget,
+);
 
 process.stdout.write(`${JSON.stringify({
   installed: true,

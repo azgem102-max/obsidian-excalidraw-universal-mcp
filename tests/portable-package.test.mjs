@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("portable package contains AI entrypoints and pinned official plugins", async () => {
-  for (const name of ["START-HERE-AR.md", "AGENTS.md", "CLAUDE.md", "doctor.mjs", "plugin-versions.json"]) {
+  for (const name of ["START-HERE-AR.md", "AGENTS.md", "CLAUDE.md", "doctor.mjs", "install-on-windows.ps1", "plugin-versions.json"]) {
     await fs.access(path.join(root, name));
   }
   const lock = JSON.parse(await fs.readFile(path.join(root, "plugin-versions.json"), "utf8"));
@@ -48,6 +48,13 @@ test("the public package does not redistribute font binaries", async () => {
   const fontDirectory = path.join(root, "assets", "fonts");
   const files = await fs.readdir(fontDirectory);
   assert.deepEqual(files, ["README.md"]);
+});
+
+test("Windows helper uses Windows Node and remains compatible with legacy PowerShell decoding", async () => {
+  const helper = await fs.readFile(path.join(root, "install-on-windows.ps1"), "utf8");
+  assert.match(helper, /Get-Command node\.exe/);
+  assert.match(helper, /install\.mjs/);
+  assert.doesNotMatch(helper, /[^\x00-\x7F]/);
 });
 
 test("doctor rejects a stale live bridge until Obsidian is restarted", async () => {

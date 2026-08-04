@@ -30,6 +30,30 @@ node install.mjs --vault "<VAULT>" --clients all --project-root "."
 
 يمكن تمرير قائمة مثل `--clients project,codex`.
 
+## Claude داخل WSL وClaude Desktop على Windows
+
+لا تشغّل إعداد Claude Desktop بمسارات Linux عادية. المثبّت يكتشف WSL تلقائيًا ويحوّل مسار الخادم والـVault إلى مسارات Windows، ويستخدم `node.exe` الخاص بـWindows داخل ملف Claude Desktop.
+
+يشترط أن يكون الريبو والـVault على قرص Windows ظاهر داخل WSL، مثل `/mnt/c`. يمكن تمرير المسار بصيغة Windows أو WSL:
+
+```bash
+node install.mjs --vault "C:\Users\name\Documents\Obsidian Vault" --clients claude-desktop
+```
+
+إذا كان الريبو داخل `/home` فقط، يتوقف المثبّت قبل كتابة إعداد غير صالح ويطلب نقله إلى قرص Windows. وإذا كانت جلسة الوكيل لا تملك صلاحية الكتابة داخل `%APPDATA%\Claude`، يعرض المثبّت أمر Windows PowerShell جاهزًا ليشغله المستخدم مرة واحدة.
+
+## جلسة Linux منفصلة عن Windows
+
+بعض وكلاء الذكاء الاصطناعي يعملون داخل حاوية Linux لا ترى قرص Windows أصلًا. في هذه الحالة يمنع المثبّت إعداد Claude Desktop تلقائيًا، لأن أي مسار Linux سيصبح غير صالح داخل تطبيق Windows.
+
+نزّل الريبو على Windows، ثم افتح Windows PowerShell داخل مجلده وشغّل:
+
+```powershell
+.\install-on-windows.ps1 -Vault "C:\Users\name\Documents\Obsidian Vault" -Clients "claude-desktop"
+```
+
+السكربت يبحث عن `node.exe` على Windows ويشغّل المثبّت بالمسارات الصحيحة. لا يحتاج المستخدم إلى فتح ملف إعداد Claude أو تعديله يدويًا.
+
 ## تثبيت دون إنترنت
 
 إذا كانت إضافتا Excalidraw وExtras مثبتتين مسبقًا:
@@ -43,4 +67,3 @@ node install.mjs --vault "<VAULT>" --clients all --offline
 ## Obsidian غير مثبت
 
 لا يثبت هذا الريبو تطبيقًا على مستوى النظام تلقائيًا لأن ذلك يحتاج إذنًا إداريًا ويختلف بين الأنظمة. على الوكيل طلب الإذن ثم استخدام صفحة [Obsidian الرسمية](https://obsidian.md/download) أو مدير الحزم الرسمي المتاح للمستخدم، وبعد فتح Vault ينفذ المثبت أعلاه.
-
