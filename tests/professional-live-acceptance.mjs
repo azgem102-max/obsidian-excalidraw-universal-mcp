@@ -270,7 +270,7 @@ async function runAutomatedCase(scriptCase) {
 
 const bridgeStatus = await test("bridge status for professional scripts", async () => {
   const value = await rpc("status");
-  assert(value.bridgeVersion === "0.5.3", `Expected bridge 0.5.3, received ${value.bridgeVersion || "unknown"}.`);
+  assert(value.bridgeVersion === "0.6.0", `Expected bridge 0.6.0, received ${value.bridgeVersion || "unknown"}.`);
   assert(value.excalidrawExtras?.installed && value.excalidrawExtras?.enabled, "Excalidraw Extras must be installed and enabled for the professional package.");
   report.bridge = value;
   return { bridgeVersion: value.bridgeVersion, extras: value.excalidrawExtras };

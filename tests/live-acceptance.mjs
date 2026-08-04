@@ -79,13 +79,24 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+const elementAliases = new Map();
+function rememberElementAliases(result) {
+  for (const mapping of result?.idMappings || []) {
+    elementAliases.set(mapping.requestedId, mapping.resolvedId);
+  }
+  return result;
+}
+function elementId(alias) {
+  return elementAliases.get(alias) || alias;
+}
+
 function idByText(scene, text) {
   return scene.elements.find((element) => element.type === "text" && (element.rawText === text || element.originalText === text || element.text === text))?.id;
 }
 
 const status = await test("status and bridge version", async () => {
   const value = await rpc("status");
-  assert(value.bridgeVersion === "0.5.3", `Expected bridge 0.5.3, received ${value.bridgeVersion}`);
+  assert(value.bridgeVersion === "0.6.0", `Expected bridge 0.6.0, received ${value.bridgeVersion}`);
   assert(value.excalidrawExtras?.installed, "Excalidraw Extras is not installed");
   assert(value.excalidrawExtras?.enabled, "Excalidraw Extras is not enabled");
   report.bridge = value;
@@ -163,7 +174,7 @@ await test("create_drawing stays empty", async () => {
 });
 
 await test("batch_create all basic element types and styles", async () => {
-  const value = await rpc("batch_create_elements", { elements: [
+  const value = rememberElementAliases(await rpc("batch_create_elements", { elements: [
     { id: "rect-a", type: "rectangle", x: 100, y: 180, width: 180, height: 90, backgroundColor: "#dbeafe", strokeColor: "#2563eb", fillStyle: "solid", roughness: 0 },
     { id: "rect-b", type: "rectangle", x: 380, y: 130, width: 150, height: 80, backgroundColor: "#ede9fe", strokeColor: "#7c3aed", fillStyle: "hachure", roughness: 1 },
     { id: "rect-c", type: "rectangle", x: 700, y: 240, width: 210, height: 100, backgroundColor: "#dcfce7", strokeColor: "#15803d", fillStyle: "cross-hatch", roughness: 2 },
@@ -176,48 +187,50 @@ await test("batch_create all basic element types and styles", async () => {
     { id: "arrow-elbow", type: "arrow", x: 850, y: 600, points: [[0,0],[0,-60],[180,-60],[180,0]], elbowed: true, strokeColor: "#15803d" },
     { id: "free-a", type: "freedraw", x: 100, y: 720, points: [[0,0],[40,-20],[80,15],[130,-10],[180,0]], pressures: [0.5,0.7,0.4,0.8,0.5], simulatePressure: false, strokeColor: "#3e6f8d", strokeWidth: 2 },
     { id: "title001", type: "text", x: 100, y: 60, text: "مختبر القبول البصري", fontSize: 32, fontFamily: 4, strokeColor: "#172554" },
-  ] });
+  ] }));
   assert(value.count === 12, `Expected 12 elements, received ${value.count}`);
   return { count: value.count };
 });
 
 await test("get/query/update/style tools", async () => {
-  const before = await rpc("get_element", { id: "rect-a" });
+  const before = await rpc("get_element", { id: elementId("rect-a") });
   assert(before.element.backgroundColor === "#dbeafe", "get_element mismatch");
-  await rpc("update_element", { id: "rect-a", width: 200, opacity: 90, angle: 0.05 });
-  await rpc("apply_style_to_elements", { elementIds: ["rect-a", "rect-b", "rect-c"], style: { strokeWidth: 2, roundness: { type: 3 } } });
+  await rpc("update_element", { id: elementId("rect-a"), width: 200, opacity: 90, angle: 0.05 });
+  await rpc("apply_style_to_elements", { elementIds: ["rect-a", "rect-b", "rect-c"].map(elementId), style: { strokeWidth: 2, roundness: { type: 3 } } });
   const query = await rpc("query_elements", { type: "rectangle" });
   assert(query.count === 3, `Expected 3 rectangles, received ${query.count}`);
   return { rectangles: query.count };
 });
 
 await test("align/distribute/group/lock/duplicate/ungroup", async () => {
-  await rpc("align_elements", { elementIds: ["rect-a", "rect-b", "rect-c"], alignment: "top" });
-  await rpc("distribute_elements", { elementIds: ["rect-a", "rect-b", "rect-c"], direction: "horizontal" });
-  const group = await rpc("group_elements", { elementIds: ["rect-a", "rect-b", "rect-c"] });
-  await rpc("lock_elements", { elementIds: ["rect-a", "rect-b", "rect-c"] });
-  await rpc("unlock_elements", { elementIds: ["rect-a", "rect-b", "rect-c"] });
-  const copies = await rpc("duplicate_elements", { elementIds: ["rect-a", "rect-b", "rect-c"], offsetX: 0, offsetY: 160 });
+  const rectangleIds = ["rect-a", "rect-b", "rect-c"].map(elementId);
+  await rpc("align_elements", { elementIds: rectangleIds, alignment: "top" });
+  await rpc("distribute_elements", { elementIds: rectangleIds, direction: "horizontal" });
+  const group = await rpc("group_elements", { elementIds: rectangleIds });
+  await rpc("lock_elements", { elementIds: rectangleIds });
+  await rpc("unlock_elements", { elementIds: rectangleIds });
+  const copies = await rpc("duplicate_elements", { elementIds: rectangleIds, offsetX: 0, offsetY: 160 });
   await rpc("ungroup_elements", { groupId: group.groupId });
   assert(copies.ids.length === 3, "Duplicate count mismatch");
   return { groupId: group.groupId, copies: copies.ids.length };
 });
 
 await test("z-order and drop shadow", async () => {
-  await rpc("set_z_order", { elementIds: ["rect-a"], position: "front" });
-  const value = await rpc("create_drop_shadow", { elementIds: ["rect-a", "ellipse-a"], offsetX: 12, offsetY: 12, opacity: 18, locked: true, group: true });
+  await rpc("set_z_order", { elementIds: [elementId("rect-a")], position: "front" });
+  const value = await rpc("create_drop_shadow", { elementIds: ["rect-a", "ellipse-a"].map(elementId), offsetX: 12, offsetY: 12, opacity: 18, locked: true, group: true });
   assert(value.count === 2, "Shadow count mismatch");
   return value;
 });
 
 await test("snapshot restore preserves text", async () => {
   const before = await rpc("get_scene");
-  const expectedText = before.elements.find((element) => element.id === "title001")?.rawText;
+  const titleId = elementId("title001");
+  const expectedText = before.elements.find((element) => element.id === titleId)?.rawText;
   await rpc("snapshot_scene", { name: "قبول-قبل-التعديل" });
-  await rpc("update_element", { id: "title001", text: "نص مؤقت" });
+  await rpc("update_element", { id: titleId, text: "نص مؤقت" });
   await rpc("restore_snapshot", { name: "قبول-قبل-التعديل" });
   const after = await rpc("get_scene");
-  const restoredText = after.elements.find((element) => element.id === "title001")?.rawText;
+  const restoredText = after.elements.find((element) => element.id === titleId)?.rawText;
   assert(restoredText === expectedText, `Snapshot text changed: ${restoredText}`);
   return { expectedText, restoredText };
 });
@@ -235,7 +248,7 @@ const advancedElementIds = new Set();
 let transclusionExpectation = null;
 const mermaidTextExpectations = [];
 await test("create Obsidian link and transclusion", async () => {
-  await rpc("create_obsidian_link", { elementId: "rect-a", filePath: noteA, heading: "قسم الهدف", alias: "المرجع" });
+  await rpc("create_obsidian_link", { elementId: elementId("rect-a"), filePath: noteA, heading: "قسم الهدف", alias: "المرجع" });
   const transclusion = await rpc("create_transclusion", { filePath: noteA, blockId: "acceptance-block", wrapAt: 40, x: 1000, y: 180, fontSize: 18, fontFamily: 4 });
   advancedElementIds.add(transclusion.element.id);
   assert(transclusion.element.text === "محتوى مرجعي.", `Unexpected transclusion text: ${transclusion.element.text}`);
@@ -297,7 +310,7 @@ await test("Mermaid conversion", async () => {
 await test("library save, search, and insert", async () => {
   const name = `عينة القبول ${runId}`;
   const saved = await rpc("save_elements_to_library", {
-    elementIds: ["rect-a", "rect-b", "arrow-straight"],
+    elementIds: ["rect-a", "rect-b", "arrow-straight"].map(elementId),
     name,
     status: "published",
   });
@@ -370,13 +383,13 @@ await test("prepare scripts drawing", async () => {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const scene = await rpc("get_scene");
   assert(scene.path === scriptsDrawingPath && scene.elementCount === 0, "Scripts drawing is not clean");
-  await rpc("batch_create_elements", { elements: [
+  rememberElementAliases(await rpc("batch_create_elements", { elements: [
     { id: "s-a", type: "rectangle", x: 100, y: 180, width: 180, height: 90, backgroundColor: "#dbeafe", strokeColor: "#2563eb", fillStyle: "solid" },
     { id: "s-b", type: "rectangle", x: 420, y: 260, width: 220, height: 110, backgroundColor: "#ede9fe", strokeColor: "#7c3aed", fillStyle: "solid" },
     { id: "s-c", type: "rectangle", x: 780, y: 150, width: 150, height: 70, backgroundColor: "#dcfce7", strokeColor: "#15803d", fillStyle: "solid" },
     { id: "s-arrow", type: "arrow", x: 280, y: 225, points: [[0,0],[70,-40],[140,0]], strokeColor: "#475569", endArrowhead: "arrow" },
     { id: "sText001", type: "text", x: 100, y: 80, text: "سطر أول\nسطر ثان", fontSize: 22, fontFamily: 1, strokeColor: "#172554" },
-  ] });
+  ] }));
   return { path: scene.path };
 });
 
@@ -401,7 +414,7 @@ const scriptCases = [
 
 for (const [label, script, elementIds, responses] of scriptCases) {
   await test(`script: ${label}`, async () => {
-    const value = await rpc("run_script", { script, elementIds, responses }, 40_000);
+    const value = await rpc("run_script", { script, elementIds: elementIds.map(elementId), responses }, 40_000);
     assert(value.remainingResponses?.length === 0, `Unused responses: ${JSON.stringify(value.remainingResponses)}`);
     return { script: value.script, consumedResponses: value.consumedResponses, elementCount: value.elementCount };
   });

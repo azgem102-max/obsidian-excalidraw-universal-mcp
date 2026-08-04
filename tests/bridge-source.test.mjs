@@ -11,7 +11,9 @@ const root = path.resolve(directory, "..");
 test("bridge protects new drawings from stale EA workbench elements", async () => {
   const source = await fs.readFile(bridgePath, "utf8");
   const createDrawing = source.slice(source.indexOf("async createDrawing"), source.indexOf("isRegularMarkdown"));
+  const openDrawing = source.slice(source.indexOf("async openDrawing"), source.indexOf("async createDrawing"));
   assert.match(createDrawing, /ea\.clear\(\);[\s\S]*await ea\.create/);
+  assert.match(openDrawing, /getGlobalEA\(\)\.clear\(\)[\s\S]*leaf\.openFile[\s\S]*ea\.clear\(\)[\s\S]*ea\.setView\("active"\)/);
 });
 
 test("bridge operations have a timeout so one script cannot freeze the queue", async () => {
@@ -57,22 +59,44 @@ test("special text conversion is deterministic and uses native element identitie
   assert.match(source, /alphabet = "1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"/);
 });
 
-test("free-text IDs are normalized to the native Text Elements identifier format", async () => {
+test("client IDs stay aliases and never become raw Text Elements identifiers", async () => {
   const source = await fs.readFile(bridgePath, "utf8");
+  const addElement = source.slice(source.indexOf("async addElementToWorkbench"), source.indexOf("async createElement"));
   const createElement = source.slice(source.indexOf("async createElement"), source.indexOf("async batchCreateElements"));
   const batchCreate = source.slice(source.indexOf("async batchCreateElements"), source.indexOf("async updateElement"));
-  assert.match(source, /function isNativeTextId\(value\)/);
-  assert.match(source, /\^\[0-9A-Za-z\]\{8\}\$\/\.test\(value\)/);
-  assert.match(source, /type === "text" && requestedId && !isNativeTextId\(requestedId\)/);
+  assert.match(addElement, /const id = randomId\(\)/);
+  assert.doesNotMatch(addElement, /params\.id/);
   assert.match(createElement, /requestedId, resolvedId: id/);
-  assert.match(batchCreate, /const idMappings = \[\]/);
-  assert.match(batchCreate, /idMappings\.push\(\{ requestedId: element\.id, resolvedId: id \}\)/);
+  assert.match(batchCreate, /const aliases = new Map\(\)/);
+  assert.match(batchCreate, /delete prepared\.id/);
+  assert.match(batchCreate, /resolveAlias\(prepared\.startElementId\)/);
+  assert.match(batchCreate, /requestedId: element\.id, resolvedId: ids\[index\]/);
 
   const liveRunner = await fs.readFile(path.join(root, "tests", "live-acceptance.mjs"), "utf8");
-  assert.match(liveRunner, /id: "title001", type: "text"/);
-  assert.match(liveRunner, /id: "sText001", type: "text"/);
-  assert.doesNotMatch(liveRunner, /id: "title-a", type: "text"/);
-  assert.doesNotMatch(liveRunner, /id: "s-text", type: "text"/);
+  assert.match(liveRunner, /rememberElementAliases/);
+  assert.match(liveRunner, /elementId\("title001"\)/);
+  assert.match(liveRunner, /elementIds: elementIds\.map\(elementId\)/);
+});
+
+test("update_element verifies the element payload and keeps both sides of bindings consistent", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const update = source.slice(source.indexOf("async updateElement"), source.indexOf("async deleteElement"));
+  assert.match(update, /const after = result\.element/);
+  assert.match(update, /BINDING_NOT_APPLIED/);
+  assert.match(update, /UPDATE_NOT_APPLIED/);
+  assert.match(update, /touchedAnchorIds/);
+  assert.match(update, /withoutArrow/);
+  assert.match(update, /return result/);
+});
+
+test("element styles reset before each creation and containment is informational", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const style = source.slice(source.indexOf("applyStyle(ea, params)"), source.indexOf("copyBindingTargetsToWorkbench"));
+  const inspector = source.slice(source.indexOf("inspectVisualQuality"), source.indexOf("async getCanvasScreenshot"));
+  assert.match(style, /fontSize: 20/);
+  assert.match(style, /strokeStyle: "solid"/);
+  assert.match(inspector, /type: "containment", severity: "info"/);
+  assert.match(inspector, /warnings = issues\.filter/);
 });
 
 test("library persistence uses the Obsidian Excalidraw stencil store", async () => {

@@ -144,5 +144,7 @@ node install.mjs --vault "C:\مسار\الخزنة" --clients all --font "C:\م�
 - [دليل السكربتات](./SCRIPT-CATALOG-AR.md)
 - [الاستخدام مع الذكاء الاصطناعي](./docs/AI-USAGE-AR.md)
 - [حل المشكلات](./docs/TROUBLESHOOTING-AR.md)
+- [مخطط دورة عمل الوكيل](./docs/دورة%20عمل%20الوكيل.png)
+- [مخطط أين تنكسر السلسلة](./docs/أين%20تنكسر%20السلسلة.png)
 
 المشروع تطوير مستقل وليس إصدارًا رسميًا من فريق Excalidraw. تراخيص المصادر مذكورة في [إشعارات الطرف الثالث](./THIRD_PARTY_NOTICES.md).

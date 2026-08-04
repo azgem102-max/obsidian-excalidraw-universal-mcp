@@ -58,10 +58,6 @@ function randomId() {
   return [...crypto.randomBytes(8)].map((byte) => alphabet[byte % alphabet.length]).join("");
 }
 
-function isNativeTextId(value) {
-  return typeof value === "string" && /^[0-9A-Za-z]{8}$/.test(value);
-}
-
 function pointTuple(point) {
   return Array.isArray(point)
     ? [Number(point[0]), Number(point[1])]
@@ -467,9 +463,17 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
 
   async openDrawing(params) {
     const file = this.getFile(params.path);
+    // مثل createDrawing: ورشة EA حالة عامة مشتركة. إن بقيت عناصر الرسم السابق
+    // فيها سرّبتها عملية لاحقة إلى الرسم الجديد — وقد حدث ذلك فعلًا.
+    try { this.getGlobalEA().clear(); } catch { /* EA غير متاح بعد */ }
     const leaf = this.app.workspace.getLeaf(params.newLeaf === true ? "tab" : false);
     await leaf.openFile(file, { active: true });
     await new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      const ea = this.getGlobalEA();
+      ea.clear();
+      ea.setView("active"); // اربط EA بالعرض الجديد صراحةً
+    } catch { /* EA غير متاح بعد */ }
     const viewType = leaf.view?.getViewType?.();
     if (viewType !== "excalidraw") {
       throw new BridgeError(
@@ -614,8 +618,12 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     if (!newPath.toLowerCase().endsWith(".md")) newPath += ".md";
     if (this.app.vault.getAbstractFileByPath(newPath)) throw new BridgeError(`الوجهة موجودة: ${newPath}`, "FILE_EXISTS");
     await this.ensureFolderForPath(newPath);
-    await this.app.fileManager.renameFile(file, newPath);
-    return { oldPath: params.path, path: newPath, moved: true };
+    // fileManager.renameFile يشغّل تحديث روابط الخزنة كلها؛ في خزنة كبيرة قد
+    // يجمّد واجهة Obsidian فتتوقف كل عمليات الجسر خلفه في الطابور.
+    const updateLinks = params.updateLinks !== false;
+    if (updateLinks) await this.app.fileManager.renameFile(file, newPath);
+    else await this.app.vault.rename(file, newPath);
+    return { oldPath: params.path, path: newPath, moved: true, linksUpdated: updateLinks };
   }
 
   async trashNote(params) {
@@ -957,6 +965,26 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
   }
 
   applyStyle(ea, params) {
+    // ea.style حالة عامة تبقى بين النداءات: عنصر متقطع واحد كان يجعل كل ما بعده
+    // متقطعًا بشفافية موروثة. أعِد الافتراضيات القياسية ثم طبّق المطلوب فقط.
+    const canonical = {
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+      fillStyle: "solid",
+      strokeWidth: 2,
+      strokeStyle: "solid",
+      roughness: 1,
+      opacity: 100,
+      fontSize: 20,
+      fontFamily: 1,
+      textAlign: "left",
+      verticalAlign: "top",
+    };
+    for (const [key, value] of Object.entries(canonical)) {
+      if (key in ea.style) ea.style[key] = value;
+    }
+    ea.style.startArrowHead = null;
+    ea.style.endArrowHead = "arrow";
     const styleKeys = [
       "strokeColor",
       "backgroundColor",
@@ -1008,14 +1036,12 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     const parsedHeight = Number(params.height);
     const width = Number.isFinite(parsedWidth) ? parsedWidth : 160;
     const height = Number.isFinite(parsedHeight) ? parsedHeight : 80;
-    const requestedId = typeof params.id === "string" && params.id ? params.id : null;
-    // Obsidian Excalidraw stores free text separately in `Text Elements`.
-    // Keep its identifier in the native eight-character alphabet, otherwise
-    // an unsafe id such as `title-a` can be merged into another text entry on
-    // save/reopen.
-    const id = type === "text" && requestedId && !isNativeTextId(requestedId)
-      ? randomId()
-      : requestedId || randomId(type);
+    // Any id supplied by an MCP client is an alias, never a raw Excalidraw id.
+    // Excalidraw for Obsidian stores text in a second Markdown section keyed by
+    // native eight-character ids. Letting an arbitrary alias reach addText can
+    // merge unrelated text blocks on save/reopen. The caller receives the real
+    // identity through requestedId/resolvedId or idMappings.
+    const id = randomId();
     this.applyStyle(ea, params);
 
     let createdId;
@@ -1136,11 +1162,15 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     const id = await this.addElementToWorkbench(ea, params);
     const requestedId = typeof params.id === "string" && params.id ? params.id : null;
     const identity = requestedId && requestedId !== id ? { requestedId, resolvedId: id } : {};
+    const warnings = params.type === "arrow" && !params.startElementId && !params.endElementId
+      ? [{ code: "ARROW_WITHOUT_BINDING", message: "السهم غير مرتبط؛ لن يتبع الأشكال ولن يراه Auto Layout" }]
+      : [];
+    const warningResult = warnings.length ? { warnings } : {};
     const staged = ea.getElement(id) ? jsonClone(ea.getElement(id)) : null;
     await ea.addElementsToView(false, true, true);
     const current = this.getScene().elements.filter((element) => !element.isDeleted);
     const direct = current.find((element) => element.id === id);
-    if (direct) return { element: direct, ...identity };
+    if (direct) return { element: direct, ...identity, ...warningResult };
 
     // Excalidraw may replace special text (notably Obsidian transclusions) with a
     // newly generated element. Return that committed identity instead of failing
@@ -1151,8 +1181,8 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       const rightDistance = Math.abs(right.x - (Number(params.x) || 0)) + Math.abs(right.y - (Number(params.y) || 0));
       return leftDistance - rightDistance;
     })[0];
-    if (nearest) return { element: nearest, requestedId: requestedId || id, resolvedId: nearest.id };
-    if (staged) return { element: staged, ...identity, committed: false };
+    if (nearest) return { element: nearest, requestedId: requestedId || id, resolvedId: nearest.id, ...warningResult };
+    if (staged) return { element: staged, ...identity, ...warningResult, committed: false };
     throw new BridgeError(`تعذر العثور على العنصر المنشأ: ${id}`, "ELEMENT_NOT_FOUND");
   }
 
@@ -1160,27 +1190,139 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     const elements = asArray(params.elements, "elements");
     const { ea } = this.getActiveContext();
     this.prepareWorkbenchForAppend(ea);
-    const ids = [];
-    const idMappings = [];
+    const ids = new Array(elements.length);
+    const aliases = new Map();
     for (const element of elements) {
-      const id = await this.addElementToWorkbench(ea, element);
-      ids.push(id);
-      if (typeof element.id === "string" && element.id && element.id !== id) {
-        idMappings.push({ requestedId: element.id, resolvedId: id });
+      if (typeof element.id !== "string" || !element.id) continue;
+      if (aliases.has(element.id)) {
+        throw new BridgeError(`اسم العنصر مكرر داخل الدفعة: ${element.id}`, "DUPLICATE_ELEMENT_ALIAS");
       }
+      aliases.set(element.id, null);
+    }
+
+    // Create frames, then shapes, then arrows. This lets an arrow reference a
+    // friendly alias from the same batch while the stored scene only receives
+    // native ids. Returned ids retain the caller's original order.
+    const indexed = elements.map((element, index) => ({ element, index }));
+    const ordered = [
+      ...indexed.filter(({ element }) => element.type === "frame"),
+      ...indexed.filter(({ element }) => element.type !== "frame" && element.type !== "arrow"),
+      ...indexed.filter(({ element }) => element.type === "arrow"),
+    ];
+    const resolveAlias = (value) => typeof value === "string" && aliases.get(value) ? aliases.get(value) : value;
+    for (const { element, index } of ordered) {
+      const prepared = { ...element };
+      delete prepared.id;
+      if (prepared.startElementId !== undefined) prepared.startElementId = resolveAlias(prepared.startElementId);
+      if (prepared.endElementId !== undefined) prepared.endElementId = resolveAlias(prepared.endElementId);
+      if (prepared.frameId !== undefined) prepared.frameId = resolveAlias(prepared.frameId);
+      const id = await this.addElementToWorkbench(ea, prepared);
+      ids[index] = id;
+      if (typeof element.id === "string" && element.id) aliases.set(element.id, id);
     }
     await ea.addElementsToView(false, true, true);
     const created = this.getScene().elements.filter((element) => ids.includes(element.id));
-    return { ids, elements: created, count: ids.length, idMappings };
+    const idMappings = elements.flatMap((element, index) =>
+      typeof element.id === "string" && element.id
+        ? [{ requestedId: element.id, resolvedId: ids[index] }]
+        : [],
+    );
+    const warnings = elements
+      .filter((element) => element.type === "arrow" && !element.startElementId && !element.endElementId)
+      .map(() => ({ code: "ARROW_WITHOUT_BINDING", message: "السهم غير مرتبط؛ لن يتبع الأشكال ولن يراه Auto Layout" }));
+    return { ids, elements: created, count: ids.length, idMappings, ...(warnings.length ? { warnings } : {}) };
   }
 
   async updateElement(params) {
     if (typeof params.id !== "string" || !params.id) {
       throw new BridgeError("id مطلوب", "INVALID_ARGUMENT");
     }
-    const { id, ...set } = params;
+    const { id, startElementId, endElementId, ...set } = params;
+
+    // startElementId/endElementId ليسا خصائص Excalidraw. تمريرهما خامًا كان
+    // ينتج نجاحًا كاذبًا: الحقلان يُكتبان والارتباط لا يقع.
+    if (startElementId !== undefined || endElementId !== undefined) {
+      const { ea } = this.getActiveContext();
+      const view = new Map(
+        ea.getViewElements().filter((element) => !element.isDeleted).map((element) => [element.id, element]),
+      );
+      const target = view.get(id);
+      if (!target) throw new BridgeError("العنصر غير موجود", "ELEMENT_NOT_FOUND", { missing: [id] });
+      if (target.type !== "arrow") {
+        throw new BridgeError("الارتباط لا ينطبق إلا على الأسهم", "INVALID_ARGUMENT", { id, type: target.type });
+      }
+      const resolveBinding = (raw, side) => {
+        if (raw === undefined) return undefined;
+        if (raw === null) return null;
+        const element = view.get(String(raw));
+        if (!element) throw new BridgeError(`هدف ${side} غير موجود`, "ELEMENT_NOT_FOUND", { missing: [raw] });
+        // ربط سهم بنص داخل حاوية خطأ شائع؛ أعِد التوجيه إلى الحاوية.
+        const anchor = element.type === "text" && element.containerId && view.has(element.containerId)
+          ? view.get(element.containerId)
+          : element;
+        return { elementId: anchor.id, focus: 0, gap: 8 };
+      };
+      const startBinding = resolveBinding(startElementId, "startElementId");
+      const endBinding = resolveBinding(endElementId, "endElementId");
+      if (startBinding !== undefined) set.startBinding = startBinding;
+      if (endBinding !== undefined) set.endBinding = endBinding;
+
+      const nextStart = startBinding === undefined ? target.startBinding : startBinding;
+      const nextEnd = endBinding === undefined ? target.endBinding : endBinding;
+      const nextAnchorIds = new Set([nextStart?.elementId, nextEnd?.elementId].filter(Boolean));
+      const touchedAnchorIds = new Set([
+        target.startBinding?.elementId,
+        target.endBinding?.elementId,
+        ...nextAnchorIds,
+      ].filter(Boolean));
+      const extra = [];
+      for (const anchorId of touchedAnchorIds) {
+        const anchor = view.get(anchorId);
+        if (!anchor) continue;
+        const original = Array.isArray(anchor.boundElements) ? anchor.boundElements : [];
+        const withoutArrow = original.filter((entry) => entry.id !== id);
+        const updated = nextAnchorIds.has(anchorId)
+          ? [...withoutArrow, { id, type: "arrow" }]
+          : withoutArrow;
+        if (JSON.stringify(original) !== JSON.stringify(updated)) {
+          extra.push({ id: anchor.id, set: { boundElements: updated.length ? updated : null } });
+        }
+      }
+      await this.patchElements({ patches: [{ id, set }, ...extra] });
+
+      const result = this.getElement({ id });
+      const after = result.element;
+      const wantStart = startBinding === undefined ? undefined : startBinding?.elementId ?? null;
+      const wantEnd = endBinding === undefined ? undefined : endBinding?.elementId ?? null;
+      const gotStart = after.startBinding?.elementId ?? null;
+      const gotEnd = after.endBinding?.elementId ?? null;
+      if ((wantStart !== undefined && gotStart !== wantStart) || (wantEnd !== undefined && gotEnd !== wantEnd)) {
+        throw new BridgeError(
+          "لم يُطبَّق الارتباط فعلًا — احذف السهم وأعِد إنشاءه بـbatch_create_elements",
+          "BINDING_NOT_APPLIED",
+          { requested: { startElementId, endElementId }, actual: { startBinding: gotStart, endBinding: gotEnd } },
+        );
+      }
+      return result;
+    }
+
     await this.patchElements({ patches: [{ id, set }] });
-    return this.getElement({ id });
+    const result = this.getElement({ id });
+    const after = result.element;
+    // النجاح الكاذب أسوأ من العطل: الوكيل يظن أنه أصلح ويكمل. النص تحديدًا قد
+    // لا يتغيّر لأنه مخزَّن أيضًا في قسم Text Elements.
+    const unchanged = Object.keys(set).filter(
+      (key) => ["text", "originalText", "rawText"].includes(key) &&
+        String(after[key] ?? "") !== String(set[key] ?? ""),
+    );
+    if (unchanged.length) {
+      throw new BridgeError(
+        `لم يتغيّر ${unchanged.join(", ")} فعلًا — احذف العنصر وأعِد إنشاءه`,
+        "UPDATE_NOT_APPLIED",
+        { fields: unchanged, actual: unchanged.map((key) => after[key]) },
+      );
+    }
+    return result;
   }
 
   async deleteElement(params) {
@@ -1468,18 +1610,28 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
         if (first.frameId === second.id || second.frameId === first.id) continue;
         const overlapX = Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x);
         const overlapY = Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y);
-        if (overlapX > 8 && overlapY > 8) {
-          issues.push({ type: "overlap", severity: "error", elementIds: [first.id, second.id], message: `تداخل مرئي ${Math.round(overlapX)}×${Math.round(overlapY)}` });
+        if (overlapX <= 8 || overlapY <= 8) continue;
+        // الاحتواء الكامل نمط مقصود: مسارات ومناطق وخلفيات. عدّه خطأً كان يُصفّر
+        // نتيجة أي مخطط swimlane سليم، فيتعلّم الوكيل تجاهل الأداة.
+        const contains = (outer, inner) =>
+          inner.x >= outer.x && inner.y >= outer.y &&
+          inner.x + inner.width <= outer.x + outer.width &&
+          inner.y + inner.height <= outer.y + outer.height;
+        if (contains(first, second) || contains(second, first)) {
+          issues.push({ type: "containment", severity: "info", elementIds: [first.id, second.id], message: "عنصر داخل عنصر — مقصود عادةً" });
+          continue;
         }
+        issues.push({ type: "overlap", severity: "error", elementIds: [first.id, second.id], message: `تقاطع جزئي ${Math.round(overlapX)}×${Math.round(overlapY)}` });
       }
     }
     const errors = issues.filter((issue) => issue.severity === "error").length;
-    const warnings = issues.length - errors;
+    const warnings = issues.filter((issue) => issue.severity === "warning").length;
+    const infos = issues.filter((issue) => issue.severity === "info").length;
     return {
       path: scene.path,
       elementCount: scene.elementCount,
       issues,
-      summary: { errors, warnings, passed: errors === 0 },
+      summary: { errors, warnings, infos, passed: errors === 0 },
       score: Math.max(0, 100 - errors * 20 - warnings * 5),
       note: "الفحص الهندسي لا يغني عن get_canvas_screenshot والمراجعة البصرية.",
     };

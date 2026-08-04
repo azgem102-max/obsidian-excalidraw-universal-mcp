@@ -19,7 +19,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const BRIDGE_ID = "obsidian-excalidraw-mcp-bridge";
-const EXPECTED_VERSION = "0.5.3";
+const EXPECTED_VERSION = "0.6.0";
 
 function argumentsMap(argv) {
   const result = {};

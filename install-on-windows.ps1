@@ -76,7 +76,8 @@ $installerArgs = @(
   $installer,
   "--vault", $Vault,
   "--clients", $Clients,
-  "--project-root", $ProjectRoot
+  "--project-root", $ProjectRoot,
+  "--node", $nodeCommand
 )
 
 if ($Font) {

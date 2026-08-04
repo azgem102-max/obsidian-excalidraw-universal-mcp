@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,7 @@ import {
   resolveWslClaudeDesktopTarget,
   shouldBlockCrossHostClaudeDesktop,
   wslPathToWindows,
+  discoverWindowsClaudeConfigs,
 } from "./platform-paths.mjs";
 
 const BRIDGE_PLUGIN_ID = "obsidian-excalidraw-mcp-bridge";
@@ -48,6 +50,7 @@ function usage() {
     "  --clients <list>               project,codex,claude-desktop or all",
     "  --codex-config <path>          Override Codex config.toml path",
     "  --claude-desktop-config <path> Override Claude Desktop JSON path",
+    "  --node <path>                  Node executable the CLIENT will use",
     "  --font <path>                  User-owned .otf/.ttf/.woff/.woff2 local font",
     "  --force-plugin-versions        Replace installed official plugins with pinned versions",
     "  --offline                      Do not download; require official plugins to exist",
@@ -260,7 +263,16 @@ async function installLocalFont(fontInput, vaultPath, obsidianPath) {
   return { source: fontPath, destination, vaultPath: relative };
 }
 
-function mcpServerConfig(serverPath, vaultPath, command = process.execPath) {
+// process.execPath صحيح فقط إن كان المثبّت والعميل على نفس البيئة. على ويندوز
+// نفضّل المسار المعتاد إن كان execPath من nvm، فلا يكسر الإعداد أول تحديث.
+function defaultNodeCommand() {
+  if (process.platform !== "win32") return process.execPath;
+  return process.execPath.toLowerCase().includes("nvm")
+    ? "C:\\Program Files\\nodejs\\node.exe"
+    : process.execPath;
+}
+
+function mcpServerConfig(serverPath, vaultPath, command = defaultNodeCommand()) {
   return { command, args: [serverPath], env: { OBSIDIAN_VAULT_PATH: vaultPath } };
 }
 
@@ -275,7 +287,7 @@ async function configureJsonClient(configPath, serverConfig) {
   return configPath;
 }
 
-async function configureCodex(configPath, serverPath, vaultPath) {
+async function configureCodex(configPath, serverPath, vaultPath, command = defaultNodeCommand()) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await backupOnce(configPath, BRIDGE_PLUGIN_ID);
   const original = (await exists(configPath)) ? await fs.readFile(configPath, "utf8") : "";
@@ -284,7 +296,7 @@ async function configureCodex(configPath, serverPath, vaultPath) {
     "mcp_servers.obsidian_excalidraw", "mcp_servers.obsidian_excalidraw.env",
   ]);
   const block = [
-    "", "[mcp_servers.excalidraw]", `command = ${tomlLiteral(process.execPath)}`,
+    "", "[mcp_servers.excalidraw]", `command = ${tomlLiteral(command)}`,
     `args = [${tomlLiteral(serverPath)}]`, "startup_timeout_sec = 30", "",
     "[mcp_servers.excalidraw.env]", `OBSIDIAN_VAULT_PATH = ${tomlLiteral(vaultPath)}`, "",
   ].join("\n");
@@ -326,6 +338,25 @@ async function resolveWslWindowsNode() {
   );
 }
 
+async function resolveWslWindowsClaudeConfig() {
+  const expression = [
+    "[Console]::OutputEncoding=[Text.Encoding]::UTF8;",
+    "$classic=Join-Path $env:APPDATA 'Claude\\claude_desktop_config.json';",
+    "$candidates=[Collections.Generic.List[string]]::new();",
+    "$packages=Join-Path $env:LOCALAPPDATA 'Packages';",
+    "if(Test-Path -LiteralPath $packages){Get-ChildItem -LiteralPath $packages -Directory -Filter 'Claude*' -ErrorAction SilentlyContinue|ForEach-Object{",
+    "$cache=Join-Path $_.FullName 'LocalCache';",
+    "@('Roaming\\Claude\\claude_desktop_config.json','Local\\Claude\\claude_desktop_config.json')|ForEach-Object{$p=Join-Path $cache $_;if(Test-Path -LiteralPath $p){[void]$candidates.Add($p)}}",
+    "}};",
+    "if(Test-Path -LiteralPath $classic){[void]$candidates.Add($classic)};",
+    "$selected=$candidates|Where-Object{try{(Get-Content -Raw -LiteralPath $_)-match '\"mcpServers\"'}catch{$false}}|Select-Object -First 1;",
+    "if(-not $selected){$selected=$candidates|Select-Object -First 1};",
+    "if(-not $selected){$pkg=Get-ChildItem -LiteralPath $packages -Directory -Filter 'Claude*' -ErrorAction SilentlyContinue|Select-Object -First 1;if($pkg){$selected=Join-Path $pkg.FullName 'LocalCache\\Roaming\\Claude\\claude_desktop_config.json'}else{$selected=$classic}};",
+    "$selected",
+  ].join(" ");
+  return windowsPowerShellValue(expression, "ملف إعداد Claude Desktop في Windows");
+}
+
 function powershellLiteral(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
@@ -345,7 +376,7 @@ async function wslClaudeDesktopTarget(args, sourceRoot, vaultPath) {
     ? (isWindowsAbsolutePath(rawConfigPath)
       ? rawConfigPath
       : path.resolve(localPathInput(rawConfigPath, { wsl: true })))
-    : null;
+    : await resolveWslWindowsClaudeConfig();
   return resolveWslClaudeDesktopTarget({
     sourceRoot,
     vaultPath,
@@ -364,11 +395,12 @@ function requestedClients(value) {
 async function configureClients(args, sourceRoot, serverPath, vaultPath, preparedWslClaudeDesktopTarget = null) {
   const clients = requestedClients(args.clients);
   const configured = {};
+  const clientNode = args.node || defaultNodeCommand();
   if (clients.has("project")) {
     const projectRoot = path.resolve(localPathInput(args["project-root"] || process.cwd(), { wsl: RUNNING_IN_WSL }));
     configured.project = await configureJsonClient(
       path.join(projectRoot, ".mcp.json"),
-      mcpServerConfig(serverPath, vaultPath),
+      mcpServerConfig(serverPath, vaultPath, clientNode),
     );
   }
   if (clients.has("codex")) {
@@ -376,7 +408,7 @@ async function configureClients(args, sourceRoot, serverPath, vaultPath, prepare
       args["codex-config"] || path.join(os.homedir(), ".codex", "config.toml"),
       { wsl: RUNNING_IN_WSL },
     ));
-    configured.codex = await configureCodex(codexConfig, serverPath, vaultPath);
+    configured.codex = await configureCodex(codexConfig, serverPath, vaultPath, clientNode);
   }
   if (clients.has("claude-desktop")) {
     if (RUNNING_IN_WSL) {
@@ -394,16 +426,48 @@ async function configureClients(args, sourceRoot, serverPath, vaultPath, prepare
       configured.claudeDesktop = target.configDisplayPath;
       configured.claudeDesktopHost = "windows-from-wsl";
     } else {
-      const claudeConfig = path.resolve(args["claude-desktop-config"] || defaultClaudeDesktopConfig());
-      configured.claudeDesktop = await configureJsonClient(
-        claudeConfig,
-        mcpServerConfig(serverPath, vaultPath),
-      );
+      const explicit = args["claude-desktop-config"];
+      const candidates = explicit
+        ? [{ path: path.resolve(explicit), kind: "explicit", hasMcpServers: true }]
+        : discoverWindowsClaudeConfigs({ fs: fsSync, includeMissing: true });
+      const serverConfig = mcpServerConfig(serverPath, vaultPath, clientNode);
+      if (candidates.length) {
+        const written = [];
+        for (const candidate of candidates) {
+          await configureJsonClient(candidate.path, serverConfig);
+          written.push(candidate.path);
+        }
+        configured.claudeDesktop = written.length === 1 ? written[0] : written;
+        configured.claudeDesktopKinds = candidates.map((candidate) => candidate.kind);
+      } else if (process.platform === "win32") {
+        // لا تطبع «تم» وأنت لم تصل إلى التطبيق.
+        configured.claudeDesktop = null;
+        configured.claudeDesktopManualStepRequired = true;
+        configured.claudeDesktopNote =
+          "لم أجد ملف إعداد Claude Desktop. سجّل الخادم يدويًا: الإعدادات ← Local MCP servers ← Edit Config، " +
+          "ثم فعّل موصل excalidraw بالزر.";
+      } else {
+        const claudeConfig = path.resolve(defaultClaudeDesktopConfig());
+        configured.claudeDesktop = await configureJsonClient(claudeConfig, serverConfig);
+      }
     }
   }
   configured.instructions = path.join(sourceRoot, "CLAUDE.md");
   return configured;
 }
+
+if (Number(process.versions.node.split(".")[0]) < 18) {
+  process.stderr.write(`يتطلب Node 18 أو أحدث. الموجود ${process.version}.\n`);
+  process.exit(2);
+}
+process.on("uncaughtException", (error) => {
+  process.stderr.write(`\nفشل التثبيت: ${error.message}\n`);
+  process.exit(1);
+});
+process.on("unhandledRejection", (error) => {
+  process.stderr.write(`\nفشل التثبيت: ${error?.message || error}\n`);
+  process.exit(1);
+});
 
 const args = parseArguments(process.argv.slice(2));
 if (args.help) {

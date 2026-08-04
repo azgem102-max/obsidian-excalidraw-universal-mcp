@@ -1,7 +1,7 @@
 {
   "id": "obsidian-excalidraw-mcp-bridge",
   "name": "Excalidraw Universal MCP Bridge",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "minAppVersion": "1.8.7",
   "description": "Universal local MCP bridge exposing the familiar Excalidraw toolset, Obsidian drawings, and Script Engine.",
   "author": "Local workspace",

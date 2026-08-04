@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 
 const SERVER_NAME = "excalidraw-universal-mcp";
-const SERVER_VERSION = "0.5.3";
+const SERVER_VERSION = "0.6.0";
 const PLUGIN_ID = "obsidian-excalidraw-mcp-bridge";
 const DEFAULT_PORT = 27125;
 
@@ -68,7 +68,10 @@ async function bridgeCall(method, params = {}) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ method, params }),
-      signal: AbortSignal.timeout(120_000),
+      // 120s كانت أطول من مهلة أغلب عملاء MCP (60s)، فيرى الوكيل مهلة عميله بدل
+      // خطأ الجسر — ويحسب عمليةً ناجحةً فاشلةً فيعيدها ويضاعف النتيجة.
+      // 45s: أقصر من مهلة العميل وأطول من مهلة العملية داخل Obsidian (30s).
+      signal: AbortSignal.timeout(Number(process.env.EXCALIDRAW_RPC_TIMEOUT_MS) || 45_000),
     });
   } catch (error) {
     throw new Error(
@@ -107,7 +110,7 @@ const elementTypes = [
   "embeddable",
 ];
 const elementProperties = {
-  id: { type: "string", description: "معرّف اختياري ثابت للعنصر" },
+  id: { type: "string", description: "اسم مستعار اختياري؛ يعيد الجسر المعرّف الأصلي في resolvedId أو idMappings" },
   type: { type: "string", enum: elementTypes },
   x: { type: "number" },
   y: { type: "number" },
@@ -468,7 +471,15 @@ const tools = [
   {
     name: "move_note",
     description: "انقل ملاحظة أو أعد تسميتها عبر Obsidian مع تحديث الروابط بحسب إعدادات التطبيق.",
-    inputSchema: objectSchema({ path: { type: "string" }, newPath: { type: "string" } }, ["path", "newPath"]),
+    inputSchema: objectSchema({
+      path: { type: "string" },
+      newPath: { type: "string" },
+      updateLinks: {
+        type: "boolean",
+        default: true,
+        description: "عطّله للنقل السريع في الخزن الكبيرة عندما لا تحتاج تحديث الروابط.",
+      },
+    }, ["path", "newPath"]),
   },
   {
     name: "trash_note",

@@ -85,6 +85,7 @@ test("MCP protocol lists tools and proxies a bridge call", async (context) => {
   );
   const initialized = JSON.parse(await nextLine(child.stdout));
   assert.equal(initialized.result.serverInfo.name, "excalidraw-universal-mcp");
+  assert.equal(initialized.result.serverInfo.version, "0.6.0");
 
   child.stdin.write(
     `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`,
@@ -103,6 +104,8 @@ test("MCP protocol lists tools and proxies a bridge call", async (context) => {
   assert.ok(listed.result.tools.some((tool) => tool.name === "create_transclusion"));
   assert.ok(listed.result.tools.some((tool) => tool.name === "inspect_visual_quality"));
   assert.equal(listed.result.tools.length, 59);
+  const moveNote = listed.result.tools.find((tool) => tool.name === "move_note");
+  assert.equal(moveNote.inputSchema.properties.updateLinks.type, "boolean");
 
   child.stdin.write(
     `${JSON.stringify({

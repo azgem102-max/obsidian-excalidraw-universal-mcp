@@ -25,18 +25,20 @@ test("portable installer builds an isolated vault and project config without net
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-ai-kit-"));
   const vault = path.join(temporary, "Vault");
   const project = path.join(temporary, "Project");
+  const clientNode = path.join(temporary, "Portable Node", "node.exe");
   await fs.mkdir(path.join(vault, ".obsidian"), { recursive: true });
   await fs.mkdir(project, { recursive: true });
   try {
     const { stdout } = await execFileAsync(process.execPath, [
       path.join(root, "install.mjs"), "--vault", vault, "--clients", "project",
-      "--project-root", project, "--skip-official", "--offline",
+      "--project-root", project, "--node", clientNode, "--skip-official", "--offline",
     ]);
     const result = JSON.parse(stdout);
-    assert.equal(result.bridge.version, "0.5.3");
+    assert.equal(result.bridge.version, "0.6.0");
     assert.equal(result.content.baseFileCount, 34);
     assert.equal(result.content.professionalFileCount, 15);
     const config = JSON.parse(await fs.readFile(path.join(project, ".mcp.json"), "utf8"));
+    assert.equal(config.mcpServers.excalidraw.command, clientNode);
     assert.equal(config.mcpServers.excalidraw.env.OBSIDIAN_VAULT_PATH, vault);
     assert.equal((await fs.readdir(path.join(vault, "Excalidraw", "Scripts", "أدوات التخطيط"))).filter((name) => name.endsWith(".md")).length, 17);
   } finally {
@@ -56,8 +58,25 @@ test("Windows helper uses Windows Node and remains compatible with legacy PowerS
   assert.match(helper, /Select-ObsidianVault/);
   assert.match(helper, /nodeMajor -lt 18/);
   assert.match(helper, /--project-root/);
+  assert.match(helper, /--node/);
   assert.match(helper, /install\.mjs/);
   assert.doesNotMatch(helper, /[^\x00-\x7F]/);
+});
+
+test("package, bridge, and MCP server publish one coherent version", async () => {
+  const packageJson = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+  const bridgeManifest = JSON.parse(await fs.readFile(path.join(root, "obsidian-plugin", "manifest.json"), "utf8"));
+  const server = await fs.readFile(path.join(root, "server.mjs"), "utf8");
+  assert.equal(packageJson.version, "0.6.0");
+  assert.equal(bridgeManifest.version, packageJson.version);
+  assert.match(server, new RegExp(`SERVER_VERSION = "${packageJson.version.replaceAll(".", "\\.")}"`));
+});
+
+test("WSL setup discovers the active Windows Claude config instead of assuming the classic path", async () => {
+  const installer = await fs.readFile(path.join(root, "install.mjs"), "utf8");
+  assert.match(installer, /resolveWslWindowsClaudeConfig/);
+  assert.match(installer, /LOCALAPPDATA[\s\S]*Packages[\s\S]*LocalCache/);
+  assert.match(installer, /mcpServers/);
 });
 
 test("one-click Windows setup is self-contained and asks before installing Node", async () => {
@@ -71,7 +90,7 @@ test("one-click Windows setup is self-contained and asks before installing Node"
   assert.doesNotMatch(helper, /[^\x00-\x7F]/);
 });
 
-test("doctor rejects a stale live bridge until Obsidian is restarted", async () => {
+test("doctor separates installation readiness from a stale live bridge", async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-doctor-"));
   const vault = path.join(temporary, "Vault");
   const obsidian = path.join(vault, ".obsidian");
@@ -86,7 +105,7 @@ test("doctor rejects a stale live bridge until Obsidian is restarted", async () 
     for (const [id, version] of [
       ["obsidian-excalidraw-plugin", "2.25.3"],
       ["excalidraw-extras", "0.0.15"],
-      ["obsidian-excalidraw-mcp-bridge", "0.5.3"],
+      ["obsidian-excalidraw-mcp-bridge", "0.6.0"],
     ]) {
       const directory = path.join(obsidian, "plugins", id);
       await fs.mkdir(directory, { recursive: true });
@@ -105,17 +124,27 @@ test("doctor rejects a stale live bridge until Obsidian is restarted", async () 
       await Promise.all(Array.from({ length: count }, (_, index) => fs.writeFile(path.join(directory, `${index}.md`), "")));
     }
 
-    let failure;
+    // العقد الجديد: جاهزية التثبيت منفصلة عن الاتصال الحيّ. جسر قديم لا يعني أن
+    // التثبيت معطوب، فرمز الخروج يبقى صفرًا — لكن liveReady false والرسالة تطلب
+    // إعادة تشغيل Obsidian. ومع --require-live يفشل، فيصلح للـCI.
+    const { stdout } = await execFileAsync(process.execPath, [
+      path.join(root, "doctor.mjs"), "--vault", vault, "--json",
+    ]);
+    const report = JSON.parse(stdout);
+    assert.equal(report.installReady, true);
+    assert.equal(report.liveReady, false);
+    assert.equal(report.bridgeState, "version-mismatch");
+    assert.match(report.bridge.message, /أعد تشغيل Obsidian/);
+
+    let strictFailure;
     try {
-      await execFileAsync(process.execPath, [path.join(root, "doctor.mjs"), "--vault", vault, "--json"]);
+      await execFileAsync(process.execPath, [
+        path.join(root, "doctor.mjs"), "--vault", vault, "--json", "--require-live",
+      ]);
     } catch (error) {
-      failure = error;
+      strictFailure = error;
     }
-    assert.ok(failure, "doctor should exit non-zero for a stale live bridge");
-    const report = JSON.parse(failure.stdout);
-    assert.equal(report.ready, false);
-    assert.equal(report.checks.find((check) => check.name === "bridge:live").ok, false);
-    assert.match(report.next, /أعد تشغيل Obsidian/);
+    assert.ok(strictFailure, "--require-live should exit non-zero for a stale bridge");
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await fs.rm(temporary, { recursive: true, force: true });
