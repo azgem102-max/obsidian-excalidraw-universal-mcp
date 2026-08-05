@@ -143,6 +143,24 @@ test("font family resolves from the authoritative source while size never leaks"
   const withFont = { arabicFontFamily: 4, families: [] };
   const withoutFont = { arabicFontFamily: null, families: [] };
 
+  // قبل الطبقات كلها: العائلات 1-3 لا تحمل محارف عربية، فنصٌّ عربي بها غير مقروء.
+  // قيس هذا حيًّا: `currentItemFontFamily` في خزنة حقيقية كان 1 لأن صاحبها يطبّق خطه
+  // بسكربت بعد الكتابة، فاتباع الواجهة وحدها كان يُخرج كل نص عربي مفكّكًا.
+  const arabicAware = makeBridge({ baselineFontFamily: undefined, getFontStatus: () => withFont });
+  const eaArabic = freshStyle(1);
+  eaArabic.targetView = { excalidrawAPI: { getAppState: () => ({ currentItemFontFamily: 1 }) } };
+  arabicAware.applyStyle(eaArabic, { text: "نص عربي" });
+  assert.equal(eaArabic.style.fontFamily, 4, "نص عربي بلا تمرير يأخذ العائلة العربية");
+  arabicAware.applyStyle(eaArabic, { text: "Latin only" });
+  assert.equal(eaArabic.style.fontFamily, 1, "اللاتيني لا تُفرض عليه العائلة العربية");
+  arabicAware.applyStyle(eaArabic, { text: "نص عربي", fontFamily: 2 });
+  assert.equal(eaArabic.style.fontFamily, 2, "التمرير الصريح يفوز على العربية أيضًا");
+  // وخزنة بلا خط عربي: لا يُفرض 4 على نص عربي لأن العائلة غير موجودة.
+  const noArabicFont = makeBridge({ baselineFontFamily: undefined, getFontStatus: () => withoutFont });
+  const eaBare = freshStyle(1);
+  noArabicFont.applyStyle(eaBare, { text: "نص عربي" });
+  assert.equal(eaBare.style.fontFamily, 1, "بلا خط عربي مثبَّت لا يُفرض 4");
+
   // الطبقة 1: اختيار المستخدم في الواجهة يفوز على كل ما بعده.
   const uiPicked = makeBridge({
     baselineFontFamily: undefined,

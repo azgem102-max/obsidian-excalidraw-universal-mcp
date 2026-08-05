@@ -1063,8 +1063,26 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
    *   3. أول قيمة رأيناها قبل أن نلمس شيئًا.
    *
    * و`null` تعني: لا تلمس المفتاح إطلاقًا. لا يخمّن الجسر رقمًا في أي حالة.
+   *
+   * وتسبق الطبقات كلها حالةٌ ليست تخميناً بل قراءةُ محتوى: **العائلات 1-3 لا تحمل
+   * محارف عربية إطلاقًا**، فنصٌّ عربي بها يخرج مفكّكًا أو مربّعات. فإن كان النص
+   * عربيًا وفي الخزنة عائلةٌ تحمل العربية، فهي العائلة **الوحيدة** التي تعرضه —
+   * واختيارها ليس ترجيحًا بين تفضيلين، بل الفرق بين نصٍّ مقروء وغيره. قيس هذا حيًّا:
+   * `currentItemFontFamily` في خزنة المستخدم كان `1` لأنه يطبّق خطه بسكربت بعد
+   * الكتابة، فاتباعه وحده كان يُخرج كل نص عربي غير مقروء.
    */
-  defaultFontFamily(ea) {
+  defaultFontFamily(ea, params = {}) {
+    const text = [params.text, params.originalText, params.rawText].find(
+      (value) => typeof value === "string" && value,
+    );
+    // النطاق العربي الأساسي وملحقاته؛ رقمٌ أو لاتينيٌّ منفرد لا يُحتسب.
+    if (text && /[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]/.test(text)) {
+      try {
+        if (this.getFontStatus().arabicFontFamily === 4) return 4;
+      } catch {
+        // إضافة Excalidraw غير محمّلة: انتقل إلى الطبقات العامة.
+      }
+    }
     try {
       const state = ea?.targetView?.excalidrawAPI?.getAppState?.();
       const current = state?.currentItemFontFamily;
@@ -1107,7 +1125,7 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     // تسرّب الحالة الذي وُضعت الاستعادة لمنعه. فيُحسب الهدف من أوثق مصدر متاح.
     if ("fontFamily" in ea.style) {
       if (this.baselineFontFamily === undefined) this.baselineFontFamily = ea.style.fontFamily;
-      const target = this.defaultFontFamily(ea);
+      const target = this.defaultFontFamily(ea, params);
       if (target !== null) ea.style.fontFamily = target;
     }
     ea.style.startArrowHead = null;
