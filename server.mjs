@@ -426,12 +426,12 @@ const tools = [
   },
   {
     name: "create_drawing",
-    description: "أنشئ ملف Obsidian Excalidraw أصليًا جديدًا.",
+    description: "أنشئ ملف Obsidian Excalidraw أصليًا جديدًا وافتحه افتراضيًا ليصبح هدف أدوات المشهد. استخدم open:false فقط للإنشاء الصامت.",
     inputSchema: objectSchema({
       filename: { type: "string" },
       foldername: { type: "string" },
       templatePath: { type: "string" },
-      open: { type: "boolean" },
+      open: { type: "boolean", default: true },
       frontmatterKeys: openObject,
       plaintext: { type: "string" },
     }),
@@ -443,7 +443,7 @@ const tools = [
   },
   {
     name: "read_note",
-    description: "اقرأ ملاحظة Obsidian كاملة مع الخصائص والوسوم وإحصاءات الروابط.",
+    description: "اقرأ ملاحظة Obsidian كاملة. يجمع tags وسوم المتن والـFrontmatter، ويعيد inlineTags وfrontmatterTags منفصلين أيضًا.",
     inputSchema: objectSchema({ path: { type: "string" } }, ["path"]),
   },
   {

@@ -16,6 +16,52 @@ test("bridge protects new drawings from stale EA workbench elements", async () =
   assert.match(openDrawing, /getGlobalEA\(\)\.clear\(\)[\s\S]*leaf\.openFile[\s\S]*ea\.clear\(\)[\s\S]*ea\.setView\("active"\)/);
 });
 
+test("new drawings become the active target unless silent creation is explicit", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const { build } = extractMethod(source, "createDrawing", "  isRegularMarkdown", {
+    declarations: "const safePath = (value) => value;",
+  });
+  let options;
+  const ea = {
+    clear() {},
+    async create(nextOptions) {
+      options = nextOptions;
+      return "Tests/new.excalidraw.md";
+    },
+  };
+  const bridge = build({ getGlobalEA: () => ea });
+
+  const opened = await bridge.createDrawing({});
+  assert.equal(options.onNewPane, true);
+  assert.equal(options.silent, false);
+  assert.equal(opened.active, true);
+  assert.equal(opened.nextAction, null);
+
+  const silent = await bridge.createDrawing({ open: false });
+  assert.equal(options.onNewPane, false);
+  assert.equal(options.silent, true);
+  assert.equal(silent.active, false);
+  assert.match(silent.nextAction, /open_drawing/);
+});
+
+test("note tags combine body and frontmatter while preserving their sources", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const start = source.indexOf("function normalizeObsidianTag");
+  const end = source.indexOf("function randomId");
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const helpers = source.slice(start, end);
+  const { noteTagSummary } = new Function(`${helpers}; return { noteTagSummary };`)();
+  const result = noteTagSummary(
+    { tags: [{ tag: "#متن" }, { tag: "#مشترك" }] },
+    { tags: ["اختبار", "قبول", "مشترك"] },
+  );
+
+  assert.deepEqual(result.inlineTags, ["#متن", "#مشترك"]);
+  assert.deepEqual(result.frontmatterTags, ["#اختبار", "#قبول", "#مشترك"]);
+  assert.deepEqual(result.tags, ["#متن", "#مشترك", "#اختبار", "#قبول"]);
+});
+
 test("a timed-out response does not release the operation queue early", async () => {
   const source = await fs.readFile(bridgePath, "utf8");
   const declarations = `

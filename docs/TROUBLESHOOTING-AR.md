@@ -77,6 +77,9 @@ node validate-scene.mjs --path "<vault>/Excalidraw"
 تعتمد على النشط؛ نقرة من المستخدم تغيّر الهدف. و`describe_scene` يعيد `path` —
 تحقّق منه عند الشك.
 
+يفتح `create_drawing` الرسم الجديد افتراضيًا. إذا طلبت `open: false` عمدًا، فلن
+يتغير الرسم النشط وسيعيد الجسر `nextAction` يطلب فتح الملف قبل تعديله.
+
 ## عملية بطيئة تنتهي بمهلة لكنها نجحت
 
 `create_from_mermaid` قد يتجاوز مهلة العميل. تحقق أولًا بـ`describe_scene`. وإذا

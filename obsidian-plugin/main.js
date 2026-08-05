@@ -62,6 +62,32 @@ function safePath(value, label = "path") {
   return normalizePath(raw);
 }
 
+function normalizeObsidianTag(value) {
+  const tag = String(value ?? "").trim();
+  if (!tag) return null;
+  return tag.startsWith("#") ? tag : `#${tag}`;
+}
+
+function frontmatterTagList(frontmatter) {
+  const raw = frontmatter?.tags ?? frontmatter?.tag;
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw.split(",")
+      : [];
+  return [...new Set(values.map(normalizeObsidianTag).filter(Boolean))];
+}
+
+function noteTagSummary(cache = {}, frontmatter = {}) {
+  const inlineTags = [...new Set((cache.tags || []).map((tag) => normalizeObsidianTag(tag.tag)).filter(Boolean))];
+  const frontmatterTags = frontmatterTagList(frontmatter);
+  return {
+    tags: [...new Set([...inlineTags, ...frontmatterTags])],
+    inlineTags,
+    frontmatterTags,
+  };
+}
+
 function randomId() {
   // Match Excalidraw's native eight-character IDs. Long prefixed IDs can be
   // re-keyed by Obsidian's parsed-text layer and leave duplicate block entries.
@@ -603,16 +629,24 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       typeof params.foldername === "string" && params.foldername.trim()
         ? safePath(params.foldername, "foldername")
         : undefined;
+    // Opening is the safe default: every following scene tool targets the active
+    // drawing. Silent creation remains available only when callers explicitly ask
+    // for open:false, and the response tells them to open the file before editing.
+    const shouldOpen = params.open !== false;
     const createdPath = await ea.create({
       filename,
       foldername,
       templatePath: params.templatePath,
-      onNewPane: params.open === true,
-      silent: params.open !== true,
+      onNewPane: shouldOpen,
+      silent: !shouldOpen,
       frontmatterKeys: params.frontmatterKeys,
       plaintext: params.plaintext,
     });
-    return { path: createdPath };
+    return {
+      path: createdPath,
+      active: shouldOpen,
+      nextAction: shouldOpen ? null : `نادِ open_drawing على ${createdPath} قبل استخدام أدوات المشهد.`,
+    };
   }
 
   isRegularMarkdown(file) {
@@ -621,13 +655,14 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
 
   noteSummary(file) {
     const cache = this.app.metadataCache.getFileCache(file) || {};
+    const frontmatter = cache.frontmatter ? jsonClone(cache.frontmatter) : {};
     return {
       path: file.path,
       name: file.basename,
       size: file.stat.size,
       mtime: file.stat.mtime,
-      tags: (cache.tags || []).map((tag) => tag.tag),
-      frontmatter: cache.frontmatter ? jsonClone(cache.frontmatter) : {},
+      ...noteTagSummary(cache, frontmatter),
+      frontmatter,
       headingCount: cache.headings?.length || 0,
       linkCount: (cache.links?.length || 0) + (cache.embeds?.length || 0),
     };
@@ -659,6 +694,7 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       if (match) {
         try {
           summary.frontmatter = parseYaml(match[1]) || {};
+          Object.assign(summary, noteTagSummary(this.app.metadataCache.getFileCache(file) || {}, summary.frontmatter));
         } catch {
           // Keep the cache result if a user-owned document contains invalid YAML.
         }
