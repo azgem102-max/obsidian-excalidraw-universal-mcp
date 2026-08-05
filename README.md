@@ -127,9 +127,12 @@ node doctor.mjs --vault "C:\مسار\خزنة Obsidian"
 RESULT install=ready bridge=ok ready=true
 ```
 
-`install=ready` يعني التثبيت مكتمل، و`bridge=ok` يعني Obsidian مفتوح والجسر حيّ.
-ولو كان `install=ready` مع `bridge` غير ذلك فالتثبيت سليم وObsidian مغلق فقط.
-وللقراءة برمجيًا: `node doctor.mjs --vault "<path>" --json` وفيه `ready`.
+`install=ready` يعني التثبيت مكتمل، و`bridge=ok` يعني الجسر حيّ. وأي قيمة أخرى
+لـ`bridge` **لها معنى خاص** — لا تفترض أن Obsidian مغلق: الطبيب يطبع المعنى والخطوة
+التالية سطرين بعد النتيجة. وجدول الحالات الخمس في `START-HERE-AR.md`.
+
+للقراءة برمجيًا: `node doctor.mjs --vault "<path>" --json` وفيه `ready` و
+`bridge.meaning` و`bridge.nextAction` و`bridge.blame`.
 
 ## الطريقة الأسهل: اترك الذكاء الاصطناعي يجهّزه
 

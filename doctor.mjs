@@ -11,18 +11,23 @@
  *  3. مقارنة الإصدارات المثبَّتة بـplugin-versions.json وإبراز أي انزياح.
  *  4. تحقّق من إصدار Node قبل أي شيء.
  *  5. --skip-live و--bridge-host و--require-live و--lang en|ar
+ *  6. كل حالة جسر تحمل meaning وnextAction وblame في --json، فلا يفسّرها الوكيل
+ *     بنفسه من نثر. و`--bridge-host` هو المحاولة قبل الاستسلام بـ`--skip-live`.
  *
  * الاستخدام:
  *   node doctor.mjs --vault "<path>"
  *   node doctor.mjs --vault "<path>" --lang en        # مخرجات إنجليزية لـPowerShell
  *   node doctor.mjs --vault "<path>" --skip-live      # فحص التثبيت فقط
  *   node doctor.mjs --vault "<path>" --require-live   # للـCI: افشل إن لم يكن الجسر حيًّا
+ *   node doctor.mjs --vault "<path>" --bridge-host 172.17.0.1   # من حاوية إلى المضيف
  */
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import fsSync from "node:fs";
 import { fileURLToPath } from "node:url";
+import { discoverWindowsClaudeConfigs } from "./platform-paths.mjs";
 
 const REQUIRED_PLUGINS = [
   { id: "obsidian-excalidraw-plugin", label: "Excalidraw" },
@@ -135,6 +140,10 @@ const pinnedOf = (id) => lock.plugins?.find((p) => p.id === id)?.version || null
 
 const vault = path.resolve(args.vault);
 const obsidian = path.join(vault, ".obsidian");
+// مسار غير موجود كان يعطي مخرجًا **مطابقًا حرفًا بحرف** لخزنة حقيقية غير مثبَّتة،
+// فخطأ مطبعي واحد يعني «التثبيت ناقص» إلى الأبد — والمسار هنا عربي وفيه مسافات.
+const vaultExists = await fs.stat(vault).then((entry) => entry.isDirectory(), () => false);
+const obsidianExists = await fs.stat(obsidian).then((entry) => entry.isDirectory(), () => false);
 const enabled = await readJson(path.join(obsidian, "community-plugins.json"), []);
 const enabledList = Array.isArray(enabled) ? enabled : [];
 
@@ -223,6 +232,67 @@ if (args["skip-live"]) {
 }
 
 const liveReady = bridge.state === "ok";
+
+// كل حالة تحمل معناها وخطوتها التالية في **حقل**، لا في نثر يفسّره الوكيل. وثيقةٌ
+// كانت تقول «bridge غير ok يعني Obsidian مغلق» — وهي خاطئة في أربع حالات من خمس،
+// وأخطرها `no-token` ومعناها «لم يُفتح رسم Excalidraw بعد» لا «Obsidian مغلق».
+const BRIDGE_STATES = {
+  ok: {
+    meaning: "الجسر حيّ ويطابق النسخة المثبَّتة.",
+    meaningEn: "Bridge is live and matches the installed version.",
+    nextAction: null,
+    blame: "none",
+  },
+  skipped: {
+    meaning: "لم يُفحص الجسر بطلبك (--skip-live). هذه ليست نتيجة، فلا تقل «جاهز» ولا «فاشل».",
+    meaningEn: "Live check skipped by request (--skip-live). Not a result: do not report ready or failed.",
+    nextAction: "شغّل الفحص بلا --skip-live على الجهاز نفسه.",
+    nextActionEn: "Re-run without --skip-live on the machine itself.",
+    blame: "unknown",
+  },
+  "no-token": {
+    meaning: "الإضافة مثبَّتة ولم يُفتح أي رسم Excalidraw بعد، فلم يُولَّد رمز الجسر ولم يُفتح المنفذ. Obsidian ليس السبب.",
+    meaningEn: "Plugin installed but no Excalidraw drawing has been opened yet, so no bridge token and no port. Obsidian being closed is NOT the cause.",
+    nextAction: "افتح Obsidian ثم افتح أي رسم Excalidraw مرة واحدة، ثم أعد الفحص.",
+    nextActionEn: "Open Obsidian, then open any Excalidraw drawing once, and re-run.",
+    blame: "user-action",
+  },
+  "obsidian-closed": {
+    meaning: "المنفذ رفض الاتصال: Obsidian مغلق أو الإضافات غير مفعّلة.",
+    meaningEn: "Connection refused: Obsidian is closed or the plugins are disabled.",
+    nextAction: "افتح Obsidian وتأكد أن الإضافات الثلاث مفعّلة، ثم أعد الفحص.",
+    nextActionEn: "Open Obsidian, confirm the three plugins are enabled, and re-run.",
+    blame: "user-action",
+  },
+  "unreachable-host": {
+    meaning: "لا يمكن فحص الجسر من هذه البيئة (حاوية أو VM أو WSL لا تصل إلى 127.0.0.1 للمضيف). التثبيت غير متهم.",
+    meaningEn: "Bridge cannot be reached from this environment (container/VM/WSL cannot reach the host's 127.0.0.1). The installation is not at fault.",
+    nextAction: "شغّل الفحص على الجهاز نفسه، أو مرّر --bridge-host <host> لعنوان يصل إلى المضيف.",
+    nextActionEn: "Run on the machine itself, or pass --bridge-host <host> for an address that reaches it.",
+    blame: "environment",
+  },
+  "version-mismatch": {
+    meaning: "الجسر حيّ لكن النسخة العاملة في الذاكرة أقدم من المثبَّتة على القرص.",
+    meaningEn: "Bridge is live but the version running in memory is older than the one installed on disk.",
+    nextAction: "أعد تشغيل Obsidian (أو أطفئ الإضافة وأشعلها) ليُحمَّل الملف الجديد.",
+    nextActionEn: "Restart Obsidian (or toggle the plugin off and on) to load the new file.",
+    blame: "user-action",
+  },
+  "rpc-error": {
+    meaning: "الجسر يستجيب ويرفض النداء — خطأ داخلي لا مشكلة اتصال.",
+    meaningEn: "The bridge responds but rejects the call: an internal error, not a connectivity problem.",
+    nextAction: "راجع تفصيل الخطأ في bridge.detail وسجل مطوّر Obsidian.",
+    nextActionEn: "Inspect bridge.detail and the Obsidian developer console.",
+    blame: "bug",
+  },
+};
+const bridgeExplanation = BRIDGE_STATES[bridge.state] || {
+  meaning: `حالة غير معروفة: ${bridge.state}`,
+  meaningEn: `Unknown state: ${bridge.state}`,
+  nextAction: "راجع bridge.detail.",
+  nextActionEn: "Inspect bridge.detail.",
+  blame: "unknown",
+};
 const liveMessage = {
   ok: t.liveOk,
   skipped: t.liveSkipped,
@@ -233,6 +303,38 @@ const liveMessage = {
   "version-mismatch": t.liveMismatch(installedBridgeVersion, bridge.liveVersion),
 }[bridge.state];
 
+// تسجيل العميل: `ready:true` كان ممكنًا مع **صفر** تسجيل، فالمستخدم لا يرى أدوات
+// والطبيب يقول جاهز. لا يُحتسب في `installReady` (فقد يكون العميل مسجَّلًا بمسار
+// مخصّص لا نعرفه) لكنه يُبلَّغ صريحًا مع خطوته.
+const clientRegistrations = [];
+{
+  const projectRoot = path.resolve(args["project-root"] || process.cwd());
+  const mcpJson = await readJson(path.join(projectRoot, ".mcp.json"));
+  clientRegistrations.push({
+    client: "project",
+    path: path.join(projectRoot, ".mcp.json"),
+    registered: Boolean(mcpJson?.mcpServers?.excalidraw),
+  });
+  const codexPath = path.join(process.env.HOME || process.env.USERPROFILE || "", ".codex", "config.toml");
+  const codexToml = await fs.readFile(codexPath, "utf8").catch(() => "");
+  clientRegistrations.push({
+    client: "codex",
+    path: codexPath,
+    registered: /\[mcp_servers\.excalidraw\]/.test(codexToml),
+  });
+  if (process.platform === "win32") {
+    for (const candidate of discoverWindowsClaudeConfigs({ fs: fsSync })) {
+      const config = await readJson(candidate.path);
+      clientRegistrations.push({
+        client: "claude-desktop",
+        path: candidate.path,
+        registered: Boolean(config?.mcpServers?.excalidraw),
+      });
+    }
+  }
+}
+const anyClientRegistered = clientRegistrations.some((entry) => entry.registered);
+
 // 3) التقرير
 const report = {
   ready: installReady && liveReady,
@@ -241,9 +343,31 @@ const report = {
   bridgeState: bridge.state,
   node: process.version,
   vault,
+  vaultExists,
+  ...(vaultExists ? {} : { vaultMissing: `المسار غير موجود أو ليس مجلدًا: ${vault}. تحقّق من الكتابة قبل إعادة التثبيت.` }),
+  ...(vaultExists && !obsidianExists ? { obsidianMissing: `لا يوجد مجلد .obsidian داخل ${vault}: افتح هذا المجلد كخزنة في Obsidian مرة واحدة أولًا.` } : {}),
   installChecks,
   font,
-  bridge: { state: bridge.state, installedVersion: installedBridgeVersion, liveVersion: bridge.liveVersion, message: liveMessage, status: bridge.status ?? null },
+  clientRegistrations,
+  anyClientRegistered,
+  ...(anyClientRegistered ? {} : {
+    clientRegistrationHint:
+      "لم يُعثر على تسجيل الخادم لأي عميل معروف. إن كان عميلك يقرأ من مسار مخصّص فهذا متوقّع؛ وإلا شغّل install.mjs بـ--clients المناسب. الطبيب لا يفحص هذا في installReady.",
+  }),
+  bridge: {
+    state: bridge.state,
+    installedVersion: installedBridgeVersion,
+    liveVersion: bridge.liveVersion,
+    message: liveMessage,
+    // الوكيل يقرأ هذين لا النثر.
+    meaning: bridgeExplanation.meaning,
+    meaningEn: bridgeExplanation.meaningEn,
+    nextAction: bridgeExplanation.nextAction,
+    nextActionEn: bridgeExplanation.nextActionEn ?? null,
+    blame: bridgeExplanation.blame,
+    detail: bridge.detail ?? null,
+    status: bridge.status ?? null,
+  },
 };
 
 const fontMessage = font.arabicFontFamily
@@ -275,6 +399,14 @@ if (args.json) {
   process.stdout.write(`  ${font.arabicFontFamily ? "✓" : "–"} ${fontMessage}\n`);
   process.stdout.write(`  ${installReady ? "→ " + t.installOk : "→ " + t.installBad}\n`);
   process.stdout.write(`\n${t.live}\n  ${liveReady ? "✓" : ["unreachable-host","skipped"].includes(bridge.state) ? "–" : "✗"} ${liveMessage}\n`);
+  // الخطوة التالية مطبوعة صريحة: لا يفسّر أحدٌ الحالة بنفسه.
+  if (bridgeExplanation.nextAction) {
+    process.stdout.write(`  → ${lang === "en" ? bridgeExplanation.meaningEn : bridgeExplanation.meaning}\n`);
+    process.stdout.write(`  → ${lang === "en" ? (bridgeExplanation.nextActionEn ?? bridgeExplanation.nextAction) : bridgeExplanation.nextAction}\n`);
+  }
+  if (!vaultExists) process.stdout.write(`\n  ✗ ${report.vaultMissing}\n`);
+  else if (!obsidianExists) process.stdout.write(`\n  ✗ ${report.obsidianMissing}\n`);
+  if (!anyClientRegistered) process.stdout.write(`\n  ! ${report.clientRegistrationHint}\n`);
   for (const c of installChecks.filter((x) => x.versionDrift)) {
     process.stdout.write(`\n  ! ${t.versionDrift(c.name.slice(7), c.version, c.pinnedVersion)}\n`);
   }
@@ -282,7 +414,7 @@ if (args.json) {
   // والوثائق نفسها توصي بـ`--lang en` على PowerShell — فالعبارة لا تُطبع أبدًا في
   // المسار الموصى به، ويستنتج الوكيل فشلًا من تثبيت ناجح. هذا السطر هو المعيار.
   process.stdout.write(
-    `\nRESULT install=${installReady ? "ready" : "incomplete"} bridge=${bridge.state} ready=${installReady && liveReady}\n\n`,
+    `\nRESULT install=${installReady ? "ready" : "incomplete"} bridge=${bridge.state} client=${anyClientRegistered ? "registered" : "unknown"} ready=${installReady && liveReady}\n\n`,
   );
 }
 

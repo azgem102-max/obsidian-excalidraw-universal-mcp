@@ -368,7 +368,7 @@ test("the readiness criterion is language-independent and documented", async () 
     };
     const [ar, en] = [await run("ar"), await run("en")];
     assert.equal(ar, en, "سطر النتيجة يجب أن يكون نفسه في اللغتين");
-    assert.match(ar, /^RESULT install=(ready|incomplete) bridge=\S+ ready=(true|false)$/);
+    assert.match(ar, /^RESULT install=(ready|incomplete) bridge=\S+ client=(registered|unknown) ready=(true|false)$/);
 
     // والوثائق تحيل إليه لا إلى عبارة واجهة.
     for (const name of ["AGENTS.md", "START-HERE-AR.md", "README.md"]) {
@@ -415,4 +415,84 @@ test("AGENTS.md separates the setup audience and states the unknowns to ask", as
   );
   assert.match(agents, /استبعد|node_modules/, "بحث الخزنة يجب أن يذكر ما يُستبعد");
   assert.match(agents, /صفر خزنات/, "وحالة انعدام الخزنة");
+});
+
+// وثيقة كانت تقول «bridge غير ok يعني Obsidian مغلق» — خاطئة في أربع حالات من خمس،
+// وأخطرها no-token ومعناها «لم يُفتح رسم بعد». الوكيل يجب أن يقرأ حقلًا لا نثرًا.
+test("every bridge state explains itself in machine-readable fields", async () => {
+  const doctor = await fs.readFile(path.join(root, "doctor.mjs"), "utf8");
+  const states = ["ok", "skipped", "no-token", "obsidian-closed", "unreachable-host", "version-mismatch", "rpc-error"];
+  const block = doctor.slice(doctor.indexOf("const BRIDGE_STATES = {"), doctor.indexOf("const bridgeExplanation"));
+  for (const state of states) {
+    assert.ok(new RegExp(`(^|\\s)"?${state}"?:`, "m").test(block), `الحالة ${state} يجب أن تُشرح`);
+  }
+  // كل حالة غير ok تحمل خطوة تالية بالعربية والإنجليزية.
+  const entries = block.split(/\n  "?[a-z-]+"?: \{/).slice(1);
+  assert.equal(entries.length, states.length);
+  for (const entry of entries.slice(1)) {
+    assert.match(entry, /nextAction: "/);
+    assert.match(entry, /nextActionEn: "/);
+    assert.match(entry, /blame: "/);
+  }
+
+  // ولا وثيقة تنسب كل حالة غير ok إلى «Obsidian مغلق».
+  for (const name of ["README.md", "START-HERE-AR.md"]) {
+    const text = await fs.readFile(path.join(root, name), "utf8");
+    assert.doesNotMatch(
+      text, /bridge` غير `ok` يعني أن التثبيت سليم\nوأن Obsidian مغلق فقط/,
+      `${name} ينسب كل حالة إلى Obsidian مغلق`,
+    );
+    assert.match(text, /bridge\.nextAction|جدول الحالات|no-token/, `${name} يجب أن يحيل إلى الحالات لا يختصرها`);
+  }
+
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-states-"));
+  try {
+    // مسار غير موجود كان يعطي مخرجًا مطابقًا لخزنة حقيقية غير مثبَّتة.
+    const missing = await execFileAsync(process.execPath, [
+      path.join(root, "doctor.mjs"), "--vault", path.join(temporary, "nope"), "--json", "--skip-live",
+    ]).catch((error) => ({ stdout: error.stdout }));
+    const report = JSON.parse(missing.stdout);
+    assert.equal(report.vaultExists, false);
+    assert.match(report.vaultMissing, /غير موجود/);
+    assert.equal(report.bridge.blame, "unknown");
+    assert.match(report.bridge.nextAction, /--skip-live/);
+    // تسجيل العميل يُبلَّغ ولا يُحتسب في installReady.
+    assert.ok(Array.isArray(report.clientRegistrations));
+    assert.equal(typeof report.anyClientRegistered, "boolean");
+    assert.ok(!report.installChecks.some((check) => check.name.includes("client")));
+
+    // خزنة موجودة بلا .obsidian تُميَّز عن مسار غير موجود.
+    await fs.mkdir(path.join(temporary, "bare"), { recursive: true });
+    const bare = await execFileAsync(process.execPath, [
+      path.join(root, "doctor.mjs"), "--vault", path.join(temporary, "bare"), "--json", "--skip-live",
+    ]).catch((error) => ({ stdout: error.stdout }));
+    const bareReport = JSON.parse(bare.stdout);
+    assert.equal(bareReport.vaultExists, true);
+    assert.equal(bareReport.vaultMissing, undefined);
+    assert.match(bareReport.obsidianMissing, /\.obsidian/);
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+});
+
+// `--bridge-host` هو المحاولة قبل الاستسلام بـ--skip-live، وكان غائبًا من كل وثيقة.
+test("every doctor flag is documented somewhere an agent reads", async () => {
+  const doctor = await fs.readFile(path.join(root, "doctor.mjs"), "utf8");
+  const usage = doctor.match(/Usage: node doctor\.mjs[^\n]*/)[0];
+  const flags = [...usage.matchAll(/--([a-z-]+)/g)].map((m) => m[1]);
+  const docs = (await Promise.all(
+    ["AGENTS.md", "START-HERE-AR.md", "README.md", "docs/TROUBLESHOOTING-AR.md", "docs/INSTALLATION-AR.md"]
+      .map((name) => fs.readFile(path.join(root, ...name.split("/")), "utf8").catch(() => "")),
+  )).join("\n");
+  assert.deepEqual(flags.filter((flag) => !docs.includes(`--${flag}`)), [], "وسيط غير موثّق في أي وثيقة");
+});
+
+// وثائق معزولة عن سلسلة الدخول لا يصل إليها وكيل يتبع الوثائق.
+test("the installation guide is reachable from the entrypoint chain", async () => {
+  const chain = (await Promise.all(
+    ["README.md", "START-HERE-AR.md", "AGENTS.md"].map((name) => fs.readFile(path.join(root, name), "utf8")),
+  )).join("\n");
+  for (const target of ["docs/INSTALLATION-AR.md", "docs/TROUBLESHOOTING-AR.md"]) {
+    assert.ok(chain.includes(target), `${target} غير مذكور في سلسلة الدخول`);
+  }
 });
