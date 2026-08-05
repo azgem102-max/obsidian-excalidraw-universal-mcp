@@ -44,11 +44,21 @@ function safePath(value, label = "path") {
   if (typeof value !== "string" || !value.trim()) {
     throw new BridgeError(`${label} مطلوب`, "INVALID_ARGUMENT");
   }
-  const normalized = normalizePath(value.trim().replaceAll("\\", "/"));
-  if (normalized.startsWith("../") || normalized === "..") {
+  const raw = value.trim().replaceAll("\\", "/");
+  // ‏`..` في **أي** موضع لا في البداية وحدها. فحص البداية فقط كان يسمح بـ
+  // `Notes/../../../Desktop/x.md`؛ و`normalizePath` في Obsidian يوحّد الشرطات
+  // ولا يحلّ `..`، فالمسار يصل إلى `vault.create` و`createFolder` كما هو.
+  //
+  // ويُرفض المسار المطلق وحرف القرص قبل التوحيد: `normalizePath` يقصّ الشرطة
+  // الأولى فيصير `/etc/passwd` مسارًا داخل الخزنة اسمه `etc/passwd`. لا هروب فيه،
+  // لكن إعادة تفسير مسار مطلق كمسار خزنة بصمت مفاجأة من الصنف الذي نزيله؛ والرفض
+  // الصريح أصدق من كتابة ملف في مكان لم يقصده أحد.
+  const escapes =
+    raw.split("/").includes("..") || raw.startsWith("/") || /^[A-Za-z]:/.test(raw);
+  if (escapes) {
     throw new BridgeError(`${label} يجب أن يبقى داخل الـVault`, "INVALID_ARGUMENT");
   }
-  return normalized;
+  return normalizePath(raw);
 }
 
 function randomId() {
@@ -1126,10 +1136,16 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
   copyBindingTargetsToWorkbench(ea, params) {
     const ids = [params.startElementId, params.endElementId].filter(Boolean);
     if (!ids.length) return;
-    const inWorkbench = new Set(ea.getElements().map((element) => element.id));
+    const live = (element) => element && !element.isDeleted;
+    const inWorkbench = new Set(ea.getElements().filter(live).map((element) => element.id));
     const missingFromWorkbench = ids.filter((id) => !inWorkbench.has(id));
     if (!missingFromWorkbench.length) return;
-    const viewElements = new Map(ea.getViewElements().map((element) => [element.id, element]));
+    // ‏`isDeleted` يُستبعد: العنصر المحذوف يبقى شاهدةً في المشهد، والربط به يُنتج
+    // `startBinding` معلّقًا يرصده validate-scene خطأً — و`updateElement` يرفضه
+    // أصلًا، فكان المسارَان يتصرّفان تصرّفين مختلفين على المدخل نفسه.
+    const viewElements = new Map(
+      ea.getViewElements().filter(live).map((element) => [element.id, element]),
+    );
     const missingFromView = missingFromWorkbench.filter((id) => !viewElements.has(id));
     if (missingFromView.length) {
       throw new BridgeError("عناصر الربط غير موجودة", "ELEMENT_NOT_FOUND", {
@@ -1140,6 +1156,27 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       missingFromWorkbench.map((id) => viewElements.get(id)),
       true,
     );
+  }
+
+  /**
+   * ‏سهم مرتبط بنص داخل حاوية يجب أن يرتبط بالحاوية. `updateElement` يفعل هذا،
+   * ومسارا الإنشاء لم يفعلاه — فالمدخل نفسه كان يُنتج نتيجتين، وناتج الإنشاء
+   * يرصده `validate-scene` خطأً باسم `binding-to-label`. يقع كثيرًا لأن الوكيل
+   * يأخذ المعرّف من `describe_scene` فيقع على معرّف النص لا الحاوية.
+   */
+  redirectLabelBindings(ea, params) {
+    const byId = new Map(
+      [...ea.getViewElements(), ...ea.getElements()]
+        .filter((element) => element && !element.isDeleted)
+        .map((element) => [element.id, element]),
+    );
+    for (const side of ["startElementId", "endElementId"]) {
+      const target = byId.get(params[side]);
+      if (target?.type === "text" && target.containerId && byId.has(target.containerId)) {
+        params[side] = target.containerId;
+      }
+    }
+    return params;
   }
 
   async addElementToWorkbench(ea, params) {
@@ -1205,6 +1242,7 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
         id,
       );
     } else if (type === "arrow" || type === "line" || type === "freedraw") {
+      this.redirectLabelBindings(ea, params);
       this.copyBindingTargetsToWorkbench(ea, params);
       const rawPoints = Array.isArray(params.points)
         ? params.points.map(pointTuple)
@@ -1309,10 +1347,25 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     this.prepareWorkbenchForAppend(ea);
     const ids = new Array(elements.length);
     const aliases = new Map();
-    for (const element of elements) {
+    // معرّفات المشهد الحالية: اسم مستعار يساويها كان يحجبها بصمت، فسهم يقصد عنصرًا
+    // قائمًا يرتبط بالعنصر الجديد. الغموض يُرفض بدل أن يُحلّ بالحظ.
+    const sceneIds = new Set(
+      ea.getViewElements().filter((element) => !element.isDeleted).map((element) => element.id),
+    );
+    for (const [index, element] of elements.entries()) {
+      if (!element || typeof element !== "object" || Array.isArray(element)) {
+        throw new BridgeError(`العنصر رقم ${index} ليس كائنًا`, "INVALID_ARGUMENT", { index });
+      }
       if (typeof element.id !== "string" || !element.id) continue;
       if (aliases.has(element.id)) {
         throw new BridgeError(`اسم العنصر مكرر داخل الدفعة: ${element.id}`, "DUPLICATE_ELEMENT_ALIAS");
+      }
+      if (sceneIds.has(element.id)) {
+        throw new BridgeError(
+          `الاسم المستعار يطابق معرّف عنصر موجود في الرسم: ${element.id}. اختر اسمًا آخر.`,
+          "ALIAS_SHADOWS_ELEMENT",
+          { alias: element.id },
+        );
       }
       aliases.set(element.id, null);
     }
@@ -1332,7 +1385,23 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
       delete prepared.id;
       if (prepared.startElementId !== undefined) prepared.startElementId = resolveAlias(prepared.startElementId);
       if (prepared.endElementId !== undefined) prepared.endElementId = resolveAlias(prepared.endElementId);
-      if (prepared.frameId !== undefined) prepared.frameId = resolveAlias(prepared.frameId);
+      if (prepared.frameId !== undefined) {
+        prepared.frameId = resolveAlias(prepared.frameId);
+        // الأسهم تفشل صريحًا على اسم غير محلول (`copyBindingTargetsToWorkbench`)،
+        // أما `frameId` فكان يُكتب خامًا فيصير مرجع إطار معلّقًا لا يرصده شيء.
+        // فالسلوك واحد الآن: الاسم المجهول خطأ لا كتابة صامتة.
+        if (typeof prepared.frameId === "string" && prepared.frameId && !sceneIds.has(prepared.frameId)) {
+          const known = new Set([...aliases.values()].filter(Boolean));
+          const inWorkbench = ea.getElements().some((el) => el && el.id === prepared.frameId);
+          if (!known.has(prepared.frameId) && !inWorkbench) {
+            throw new BridgeError(
+              `frameId يشير إلى إطار غير موجود: ${prepared.frameId}`,
+              "ELEMENT_NOT_FOUND",
+              { missing: [prepared.frameId] },
+            );
+          }
+        }
+      }
       const id = await this.addElementToWorkbench(ea, prepared);
       ids[index] = id;
       if (typeof element.id === "string" && element.id) aliases.set(element.id, id);
@@ -1702,10 +1771,26 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     const scene = this.getScene();
     const issues = [];
     const minFontSize = Number(params.minFontSize) || 16;
+    // هندسة غير عددية تُستبعد: `import_scene` لا يتحقّق من العناصر، فعنصر بـ
+    // ‏`width: NaN` كان يُنتج «تقاطع جزئي NaN×NaN» — خطأ وهمي يُسقط النتيجة ويُعلّم
+    // الوكيل تجاهل الأداة، وهو نفس ما أصلحناه في عدّ الاحتواء.
+    const measurable = (element) =>
+      [element.x, element.y, element.width, element.height].every((value) => Number.isFinite(value));
+    const malformed = scene.elements.filter(
+      (element) => ["rectangle", "ellipse", "diamond", "blob", "image", "embeddable"].includes(element.type) && !measurable(element),
+    );
     const shapes = scene.elements.filter((element) =>
       ["rectangle", "ellipse", "diamond", "blob", "image", "embeddable"].includes(element.type) &&
-      element.customData?.mcpRole !== "drop-shadow",
+      element.customData?.mcpRole !== "drop-shadow" && measurable(element),
     );
+    for (const element of malformed) {
+      issues.push({
+        type: "invalid_geometry",
+        severity: "warning",
+        elementIds: [element.id],
+        message: "إحداثيات أو أبعاد غير عددية — العنصر مستبعد من فحص التداخل",
+      });
+    }
     for (const element of scene.elements) {
       if (element.type === "text" && Number(element.fontSize) < minFontSize) {
         issues.push({ type: "small_text", severity: "warning", elementIds: [element.id], message: `حجم الخط ${element.fontSize} أصغر من ${minFontSize}` });

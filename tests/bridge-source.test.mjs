@@ -105,7 +105,11 @@ test("element styles reset before each creation and containment is informational
  * الدالة وتُنفَّذ فعلًا مقابل بيئة Obsidian مُقلَّدة. سلوك حقيقي، بلا استيراد.
  */
 function extractMethod(source, name, endMarker, { declarations = "", fixtures = "{}" } = {}) {
-  const body = source.slice(source.indexOf(`  ${name}(`), source.indexOf(endMarker));
+  const plain = source.indexOf(`  ${name}(`);
+  const asAsync = source.indexOf(`  async ${name}(`);
+  const start = asAsync !== -1 && (plain === -1 || asAsync < plain) ? asAsync : plain;
+  assert.notEqual(start, -1, `تعذّر تحديد بداية ${name}`);
+  const body = source.slice(start, source.indexOf(endMarker));
   assert.ok(body.includes(`${name}(`), `تعذّر استخراج ${name}`);
   // السقالة والدالة في نطاق واحد، وإلا فشل `instanceof` على أصناف مختلفة بلا معنى.
   return new Function(`
@@ -340,4 +344,137 @@ test("clear_canvas deletes live view elements before saving", async () => {
   const clearCanvas = source.slice(start, source.indexOf("  snapshotScene(", start));
   assert.match(clearCanvas, /ea\.deleteViewElements\(elements\)/);
   assert.match(clearCanvas, /await this\.saveDrawing\(\)/);
+});
+
+// كلها أعطال أثبتها فحص خصومي بالتنفيذ على الفرع نفسه، لا مراجعة نظر.
+test("vault paths cannot escape with an interior traversal segment", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const body = source.slice(source.indexOf("function safePath"), source.indexOf("function randomId"));
+  // ‏normalizePath في Obsidian يوحّد الشرطات ولا يحلّ `..` — نقلّده كما هو.
+  const safePath = new Function("normalizePath", "BridgeError", `${body}; return safePath;`)(
+    (p) => p.replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/"),
+    class extends Error { constructor(message, code) { super(message); this.code = code; } },
+  );
+
+  // فحص البداية وحده كان يسمح بهذه: `..` في الوسط يخرج من الخزنة فعلًا.
+  for (const escape of [
+    "Notes/../../../Desktop/pwned.md", "a/../../b", "out/../../../etc/x",
+    "../x", "..", "/etc/passwd", "C:/Windows/x", "out\\..\\..\\x",
+  ]) {
+    assert.throws(() => safePath(escape, "path"), /INVALID_ARGUMENT|Vault/, `يجب رفض ${escape}`);
+  }
+  for (const good of ["ok/inner.md", "دليل التثبيت/ملف.md", "a/b/c.excalidraw.md", "one.md"]) {
+    assert.doesNotThrow(() => safePath(good, "path"), `يجب قبول ${good}`);
+  }
+  // ‏`..` كجزء من اسم مشروع لا كمقطع كامل ليس هروبًا.
+  assert.doesNotThrow(() => safePath("notes/a..b.md", "path"));
+});
+
+test("create paths retarget label bindings and refuse deleted anchors", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const addElement = source.slice(source.indexOf("async addElementToWorkbench"), source.indexOf("async createElement"));
+  // مسارا الإنشاء والتعديل يجب أن يتصرّفا تصرّفًا واحدًا على المدخل نفسه.
+  assert.match(addElement, /this\.redirectLabelBindings\(ea, params\)/);
+
+  const { build } = extractMethod(source, "redirectLabelBindings", "  async addElementToWorkbench");
+  const view = [
+    { id: "boxAAAAA", type: "rectangle" },
+    { id: "lblAAAAA", type: "text", containerId: "boxAAAAA" },
+    { id: "freeAAAA", type: "text" },
+    { id: "goneAAAA", type: "text", containerId: "missing1" },
+  ];
+  const bridge = build({});
+  const ea = { getViewElements: () => view, getElements: () => [] };
+
+  const bound = bridge.redirectLabelBindings(ea, { startElementId: "lblAAAAA", endElementId: "boxAAAAA" });
+  assert.equal(bound.startElementId, "boxAAAAA", "نص داخل حاوية يُعاد توجيهه إلى الحاوية");
+  assert.equal(bound.endElementId, "boxAAAAA");
+  const free = bridge.redirectLabelBindings(ea, { startElementId: "freeAAAA" });
+  assert.equal(free.startElementId, "freeAAAA", "نص حر يبقى هدفًا مشروعًا");
+  const orphan = bridge.redirectLabelBindings(ea, { startElementId: "goneAAAA" });
+  assert.equal(orphan.startElementId, "goneAAAA", "حاوية مفقودة: لا يُعاد التوجيه إلى العدم");
+
+  const copyBinding = source.slice(source.indexOf("  copyBindingTargetsToWorkbench(ea, params)"), source.indexOf("  redirectLabelBindings"));
+  assert.match(copyBinding, /const live = \(element\) => element && !element\.isDeleted/);
+  assert.match(copyBinding, /getElements\(\)\.filter\(live\)/);
+  assert.match(copyBinding, /getViewElements\(\)\.filter\(live\)/);
+});
+
+test("batch aliases fail loudly instead of leaking or shadowing", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const declarations =
+    source.slice(source.indexOf("class BridgeError"), source.indexOf("function safePath")) +
+    "\nlet nextId = 0; const makeId = () => `gen${String(++nextId).padStart(5, \"0\")}`;";
+  const { build } = extractMethod(source, "batchCreateElements", "  async updateElement", { declarations });
+
+  // مشهد قائم فيه عنصر معرّفه `boxAAAAA`، وإطار قائم `frmAAAAA`.
+  const scene = [{ id: "boxAAAAA", type: "rectangle" }, { id: "frmAAAAA", type: "frame" }];
+  const run = (elements) => {
+    const seen = [];
+    const workbench = [];
+    const ea = {
+      getViewElements: () => scene,
+      getElements: () => workbench,
+      addElementsToView: async () => {},
+    };
+    const bridge = build({
+      getActiveContext: () => ({ ea }),
+      prepareWorkbenchForAppend: () => {},
+      addElementToWorkbench: async (_ea, prepared) => {
+        seen.push(prepared);
+        const id = `gen${String(seen.length).padStart(5, "0")}`;
+        workbench.push({ id, type: prepared.type });
+        return id;
+      },
+      getScene: () => ({ elements: workbench }),
+    });
+    return { promise: bridge.batchCreateElements({ elements }), seen };
+  };
+  const rejects = async (elements, code) => {
+    await assert.rejects(run(elements).promise, (error) => error.code === code, `توقّعنا ${code}`);
+  };
+
+  // اسم مستعار يطابق معرّفًا قائمًا كان يحجبه بصمت: سهم يقصد العنصر القائم يرتبط بالجديد.
+  await rejects([{ type: "rectangle", id: "boxAAAAA" }], "ALIAS_SHADOWS_ELEMENT");
+  // عنصر ليس كائنًا كان يُنتج TypeError خامًا لا خطأ جسر.
+  await rejects([null], "INVALID_ARGUMENT");
+  await rejects([{ type: "rectangle" }, "nope"], "INVALID_ARGUMENT");
+  await rejects([[]], "INVALID_ARGUMENT");
+  // ‏frameId مجهول كان يُكتب خامًا فيصير مرجع إطار معلّقًا لا يرصده شيء.
+  await rejects([{ type: "rectangle", frameId: "ghostFrame" }], "ELEMENT_NOT_FOUND");
+  // الاسم المكرر داخل الدفعة يُرفض قبل إنشاء أي عنصر.
+  await rejects([{ type: "rectangle", id: "aa" }, { type: "ellipse", id: "aa" }], "DUPLICATE_ELEMENT_ALIAS");
+
+  // ما يجب أن ينجح: إطار الدفعة، وإطار قائم، والترتيب، وحفظ ترتيب المتصل.
+  const okBatch = run([
+    { type: "arrow", startElementId: "one", endElementId: "two" },
+    { type: "rectangle", id: "one" },
+    { type: "rectangle", id: "two", frameId: "myFrame" },
+    { type: "frame", id: "myFrame" },
+    { type: "ellipse", frameId: "frmAAAAA" },
+  ]);
+  const result = await okBatch.promise;
+  const order = okBatch.seen.map((element) => element.type);
+  assert.deepEqual(order, ["frame", "rectangle", "rectangle", "ellipse", "arrow"], "إطار ثم أشكال ثم أسهم");
+  const arrow = okBatch.seen.at(-1);
+  assert.equal(arrow.startElementId, result.ids[1], "السهم يرتبط بالمعرّف المولَّد لا بالاسم");
+  assert.equal(arrow.endElementId, result.ids[2]);
+  assert.equal(okBatch.seen[2].frameId, result.ids[3], "frameId من الدفعة يُحلّ");
+  assert.equal(okBatch.seen[3].frameId, "frmAAAAA", "إطار قائم في المشهد يُقبل كما هو");
+  assert.equal(result.ids.length, 5);
+  assert.ok(okBatch.seen.every((element) => element.id === undefined), "لا اسم مستعار يصل إلى الإنشاء");
+  assert.deepEqual(
+    result.idMappings.map((mapping) => mapping.requestedId),
+    ["one", "two", "myFrame"],
+    "الخريطة بترتيب المتصل",
+  );
+});
+
+test("malformed geometry is reported, not turned into a phantom overlap", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const inspector = source.slice(source.indexOf("inspectVisualQuality"), source.indexOf("async getCanvasScreenshot"));
+  assert.match(inspector, /Number\.isFinite\(value\)/);
+  assert.match(inspector, /type: "invalid_geometry"/);
+  assert.match(inspector, /إحداثيات أو أبعاد غير عددية/);
+  assert.match(inspector, /&& measurable\(element\)/, "العنصر المشوّه يخرج من حلقة التداخل");
 });

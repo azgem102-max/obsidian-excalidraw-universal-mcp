@@ -276,3 +276,44 @@ test("no shipped document tells the agent to hard-code font family 4", async () 
     }
   }
 });
+
+// أداة معلَنة بلا منفّذ تنجح في `tools/list` وتفشل عند أول نداء — والفحص الساكن
+// القائم كان يعدّ الأدوات ولا يتحقّق من أن لكل واحدة منفّذًا على الجهة الأخرى.
+test("every declared tool has an implementation on the other side", async () => {
+  const server = await fs.readFile(path.join(root, "server.mjs"), "utf8");
+  const bridge = await fs.readFile(path.join(root, "obsidian-plugin", "main.js"), "utf8");
+  const uniq = (list) => [...new Set(list)];
+
+  const declaredRaw = [...server.matchAll(/^\s*name: "([a-z_0-9]+)",\s*$/gm)].map((m) => m[1]);
+  const dispatchedRaw = [...bridge.matchAll(/case "([a-z_0-9]+)":/g)].map((m) => m[1]);
+  const declared = uniq(declaredRaw);
+  const dispatched = uniq(dispatchedRaw);
+  // أدوات يعالجها الخادم محليًا ولا تُرسل إلى الجسر إطلاقًا.
+  const serverLocal = uniq([...server.matchAll(/name === "([a-z_0-9]+)"/g)].map((m) => m[1]));
+  const rpcCalled = uniq([...server.matchAll(/bridgeCall\(\s*"([a-z_0-9]+)"/g)].map((m) => m[1]));
+
+  assert.equal(declared.length, 59, "عدد الأدوات المعلَنة");
+  assert.deepEqual(
+    declared.filter((tool) => !dispatched.includes(tool) && !serverLocal.includes(tool)),
+    [], "أداة معلَنة لا ينفّذها الجسر ولا الخادم",
+  );
+  assert.deepEqual(
+    rpcCalled.filter((method) => !dispatched.includes(method)),
+    [], "الخادم ينادي طريقة RPC لا يوزّعها الجسر",
+  );
+  assert.deepEqual(uniq(declaredRaw.filter((t, i) => declaredRaw.indexOf(t) !== i)), [], "اسم أداة مكرَّر");
+  assert.deepEqual(uniq(dispatchedRaw.filter((t, i) => dispatchedRaw.indexOf(t) !== i)), [], "case مكرَّر");
+
+  // كل معالج مُنادى في dispatch معرَّف فعلًا: الظهور الوحيد يعني نداءً بلا تعريف.
+  const dispatchBlock = bridge.slice(bridge.indexOf("async dispatch("), bridge.indexOf("  status() {"));
+  const handlers = uniq([...dispatchBlock.matchAll(/this\.([A-Za-z0-9_]+)\(/g)].map((m) => m[1]));
+  assert.deepEqual(
+    handlers.filter((h) => [...bridge.matchAll(new RegExp(`(?:async )?${h}\\s*\\(`, "g"))].length <= 1),
+    [], "معالج مُنادى بلا تعريف",
+  );
+
+  // كل أداة لها مخطط دخل ووصف غير فارغ.
+  const blocks = server.split(/\n\s*\{\s*\n\s*name: "/).slice(1).map((b) => [b.slice(0, b.indexOf('"')), b]);
+  assert.deepEqual(blocks.filter(([, b]) => !b.includes("inputSchema")).map(([n]) => n), [], "أداة بلا inputSchema");
+  assert.deepEqual(blocks.filter(([, b]) => !/description:/.test(b)).map(([n]) => n), [], "أداة بلا وصف");
+});
