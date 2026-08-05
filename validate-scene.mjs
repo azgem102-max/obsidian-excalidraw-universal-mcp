@@ -94,12 +94,20 @@ function checkScene(scene, file) {
         el.id);
     }
 
-    // 4) معرّفات غير أصلية. النص أخطر لأنه مفتاح قسم Text Elements الثاني؛
-    // معرّف غير أصلي قد يدمج نصوصًا مستقلة عند الحفظ وإعادة الفتح.
-    if (typeof el.id === "string" && !/^[0-9A-Za-z]{8}$/.test(el.id)) {
-      add(el.type === "text" ? "error" : "warning", "id-not-native",
-        `معرّف غير أصلي (${el.id.length} محارف)؛ المطلوب 8 محارف أبجدية رقمية` +
-        (el.type === "text" ? " — هذا قد يفسد قسم Text Elements عند الحفظ" : ""), el.id);
+    // 4) النص مفتاح لقسم Text Elements الثاني، لذلك يبقى مقيدًا بمعرف Obsidian
+    // ذي 8 محارف. أما محوّل Mermaid الرسمي في Excalidraw فيولد nanoid بطول 21
+    // للأشكال والأسهم؛ رفضه يجعل المدقق يفشل على ناتج الإضافة نفسها.
+    if (typeof el.id === "string") {
+      const shortId = /^[0-9A-Za-z]{8}$/.test(el.id);
+      const excalidrawId = /^[0-9A-Za-z_-]{21}$/.test(el.id);
+      const validId = el.type === "text" ? shortId : shortId || excalidrawId;
+      if (!validId) {
+        add(el.type === "text" ? "error" : "warning", "id-not-native",
+          el.type === "text"
+            ? `معرّف نص غير أصلي (${el.id.length} محارف)؛ المطلوب 8 محارف أبجدية رقمية — هذا قد يفسد قسم Text Elements عند الحفظ`
+            : `معرّف غير أصلي (${el.id.length} محارف)؛ المطلوب 8 محارف أبجدية رقمية أو nanoid رسمي بطول 21`,
+          el.id);
+      }
     }
 
     // 5) سلامة النص المرتبط

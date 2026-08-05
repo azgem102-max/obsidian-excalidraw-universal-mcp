@@ -68,9 +68,9 @@ async function bridgeCall(method, params = {}) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ method, params }),
-      // 120s كانت أطول من مهلة أغلب عملاء MCP (60s)، فيرى الوكيل مهلة عميله بدل
-      // خطأ الجسر — ويحسب عمليةً ناجحةً فاشلةً فيعيدها ويضاعف النتيجة.
-      // 45s: أقصر من مهلة العميل وأطول من مهلة العملية داخل Obsidian (30s).
+      // 45s يترك للجسر فرصة إعادة خطأ مهلة مفهوم عندما تكون الواجهة قادرة على
+      // تشغيل المؤقت. تحويل Mermaid المتزامن قد يحجب خيط الواجهة؛ الجسر يحمي
+      // الطابور ويمنع تكرار الطلب المطابق حتى لو انتهت مهلة النقل هنا.
       signal: AbortSignal.timeout(Number(process.env.EXCALIDRAW_RPC_TIMEOUT_MS) || 45_000),
     });
   } catch (error) {
@@ -395,9 +395,13 @@ const tools = [
   },
   {
     name: "create_from_mermaid",
-    description: "حوّل Mermaid إلى عناصر Excalidraw حقيقية داخل رسم Obsidian النشط.",
+    description: "حوّل Mermaid إلى عناصر Excalidraw حقيقية. إعادة الطلب المطابق تُعيد النتيجة السابقة منعًا للتكرار؛ استخدم forceDuplicate للتكرار المقصود.",
     inputSchema: objectSchema(
-      { mermaidDiagram: { type: "string" }, groupElements: { type: "boolean", default: true } },
+      {
+        mermaidDiagram: { type: "string" },
+        groupElements: { type: "boolean", default: true },
+        forceDuplicate: { type: "boolean", default: false },
+      },
       ["mermaidDiagram"],
     ),
   },

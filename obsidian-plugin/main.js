@@ -8,6 +8,7 @@ const EXCALIDRAW_EXTRAS_PLUGIN_ID = "excalidraw-extras";
 const DEFAULT_PORT = 27125;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const OPERATION_TIMEOUT_MS = 30_000;
+const MERMAID_REPLAY_WINDOW_MS = 10 * 60_000;
 const SCRIPT_EXTENSIONS = new Set(["md", "js", "txt"]);
 
 class BridgeError extends Error {
@@ -96,6 +97,7 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     await this.saveData(this.settings);
 
     this.operationQueue = Promise.resolve();
+    this.mermaidRequests = new Map();
     this.snapshots = new Map();
     this.server = http.createServer((request, response) => {
       this.handleHttpRequest(request, response).catch((error) => {
@@ -165,21 +167,38 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
   }
 
   enqueue(operation) {
+    let resolveResponse;
+    let rejectResponse;
+    const response = new Promise((resolve, reject) => {
+      resolveResponse = resolve;
+      rejectResponse = reject;
+    });
     const runWithTimeout = () => {
-      let timeoutId;
-      const timeout = new Promise((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new BridgeError("انتهت مهلة العملية داخل Obsidian", "OPERATION_TIMEOUT")),
-          OPERATION_TIMEOUT_MS,
+      const timeoutMs = this.operationTimeoutMs ?? OPERATION_TIMEOUT_MS;
+      const timeoutId = setTimeout(
+        () => rejectResponse(new BridgeError("انتهت مهلة الاستجابة داخل Obsidian؛ العملية الأصلية ما زالت محمية من التداخل", "OPERATION_TIMEOUT")),
+        timeoutMs,
+      );
+      return Promise.resolve()
+        .then(operation)
+        .then(
+          (value) => {
+            clearTimeout(timeoutId);
+            resolveResponse(value);
+            return value;
+          },
+          (error) => {
+            clearTimeout(timeoutId);
+            rejectResponse(error);
+            throw error;
+          },
         );
-      });
-      return Promise.race([Promise.resolve().then(operation), timeout]).finally(() => {
-        clearTimeout(timeoutId);
-      });
     };
     const next = this.operationQueue.then(runWithTimeout, runWithTimeout);
+    // مهلة الرد لا تعني انتهاء العمل داخل Obsidian. أبقِ الطابور مربوطًا بالعمل
+    // الحقيقي حتى لا تدخل عملية لاحقة على EA بينما الأولى ما زالت تكتب في المشهد.
     this.operationQueue = next.catch(() => undefined);
-    return next;
+    return response;
   }
 
   readBody(request) {
@@ -2010,17 +2029,54 @@ class ObsidianExcalidrawMcpBridge extends Plugin {
     return { updated: true, appState: this.getScene().appState };
   }
 
+  mermaidRequestKey(view, params) {
+    const drawingPath = view.file?.path || "<active-drawing>";
+    const groupElements = params.groupElements !== false ? "group" : "ungroup";
+    return crypto
+      .createHash("sha256")
+      .update(`${drawingPath}\0${groupElements}\0${params.mermaidDiagram}`)
+      .digest("hex");
+  }
+
   async createFromMermaid(params) {
     if (typeof params.mermaidDiagram !== "string" || !params.mermaidDiagram.trim()) {
       throw new BridgeError("mermaidDiagram مطلوب", "INVALID_ARGUMENT");
     }
     this.requireExcalidrawExtras("Mermaid");
-    const { ea } = this.getActiveContext();
-    this.prepareWorkbenchForAppend(ea);
-    const result = await ea.addMermaid(params.mermaidDiagram, params.groupElements !== false);
-    if (typeof result === "string") throw new BridgeError(result, "MERMAID_ERROR");
-    await ea.addElementsToView(false, true, true);
-    return { ids: result, count: result.length };
+    const { ea, view } = this.getActiveContext();
+    this.mermaidRequests ||= new Map();
+    const now = Date.now();
+    const replayWindowMs = this.mermaidReplayWindowMs ?? MERMAID_REPLAY_WINDOW_MS;
+    for (const [key, entry] of this.mermaidRequests) {
+      if (entry.completedAt && now - entry.completedAt > replayWindowMs) {
+        this.mermaidRequests.delete(key);
+      }
+    }
+
+    const requestKey = this.mermaidRequestKey(view, params);
+    const existing = params.forceDuplicate === true ? null : this.mermaidRequests.get(requestKey);
+    if (existing) {
+      const reused = await existing.promise;
+      return { ...reused, reused: true };
+    }
+
+    const promise = (async () => {
+      this.prepareWorkbenchForAppend(ea);
+      const result = await ea.addMermaid(params.mermaidDiagram, params.groupElements !== false);
+      if (typeof result === "string") throw new BridgeError(result, "MERMAID_ERROR");
+      await ea.addElementsToView(false, true, true);
+      return { ids: result, count: result.length };
+    })();
+    const entry = { promise, completedAt: null };
+    this.mermaidRequests.set(requestKey, entry);
+    try {
+      const result = await promise;
+      entry.completedAt = Date.now();
+      return { ...result, reused: false };
+    } catch (error) {
+      if (this.mermaidRequests.get(requestKey) === entry) this.mermaidRequests.delete(requestKey);
+      throw error;
+    }
   }
 
   async addImage(params) {

@@ -16,10 +16,71 @@ test("bridge protects new drawings from stale EA workbench elements", async () =
   assert.match(openDrawing, /getGlobalEA\(\)\.clear\(\)[\s\S]*leaf\.openFile[\s\S]*ea\.clear\(\)[\s\S]*ea\.setView\("active"\)/);
 });
 
-test("bridge operations have a timeout so one script cannot freeze the queue", async () => {
+test("a timed-out response does not release the operation queue early", async () => {
   const source = await fs.readFile(bridgePath, "utf8");
-  assert.match(source, /OPERATION_TIMEOUT_MS = 30_000/);
-  assert.match(source, /Promise\.race\(\[Promise\.resolve\(\)\.then\(operation\), timeout\]\)/);
+  const declarations = `
+    const OPERATION_TIMEOUT_MS = 30_000;
+    class BridgeError extends Error {
+      constructor(message, code) { super(message); this.code = code; }
+    }
+  `;
+  const { build } = extractMethod(source, "enqueue", "  readBody(request)", { declarations });
+  let releaseFirst;
+  let secondStarted = false;
+  const bridge = build({ operationQueue: Promise.resolve(), operationTimeoutMs: 10 });
+
+  const first = bridge.enqueue(() => new Promise((resolve) => { releaseFirst = resolve; }));
+  await assert.rejects(first, (error) => error.code === "OPERATION_TIMEOUT");
+
+  const second = bridge.enqueue(async () => {
+    secondStarted = true;
+    return "second";
+  });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(secondStarted, false, "العملية التالية يجب أن تنتظر العمل الحقيقي لا رد المهلة");
+
+  releaseFirst("first");
+  assert.equal(await second, "second");
+});
+
+test("identical Mermaid retries reuse the first result unless duplication is explicit", async () => {
+  const source = await fs.readFile(bridgePath, "utf8");
+  const declarations = `
+    const MERMAID_REPLAY_WINDOW_MS = 10 * 60_000;
+    class BridgeError extends Error {
+      constructor(message, code) { super(message); this.code = code; }
+    }
+  `;
+  const { build } = extractMethod(source, "createFromMermaid", "  async addImage", { declarations });
+  let conversions = 0;
+  const ea = {
+    addMermaid: async () => {
+      conversions += 1;
+      return [`shape-${conversions}`];
+    },
+    addElementsToView: async () => {},
+  };
+  const bridge = build({
+    getActiveContext: () => ({ ea, view: { file: { path: "test.excalidraw.md" } } }),
+    requireExcalidrawExtras: () => {},
+    prepareWorkbenchForAppend: () => {},
+    mermaidRequestKey: () => "same-request",
+    mermaidRequests: new Map(),
+  });
+
+  const first = await bridge.createFromMermaid({ mermaidDiagram: "flowchart TD\nA-->B" });
+  const retry = await bridge.createFromMermaid({ mermaidDiagram: "flowchart TD\nA-->B" });
+  assert.equal(conversions, 1, "إعادة الطلب المطابق لا تنشئ نسخة ثانية");
+  assert.equal(first.reused, false);
+  assert.equal(retry.reused, true);
+  assert.deepEqual(retry.ids, first.ids);
+
+  const duplicate = await bridge.createFromMermaid({
+    mermaidDiagram: "flowchart TD\nA-->B",
+    forceDuplicate: true,
+  });
+  assert.equal(conversions, 2, "التكرار المقصود يبقى متاحًا بخيار صريح");
+  assert.equal(duplicate.reused, false);
 });
 
 test("snapshot restore uses the ExcalidrawAutomate scene wrapper", async () => {

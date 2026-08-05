@@ -79,9 +79,10 @@ node validate-scene.mjs --path "<vault>/Excalidraw"
 
 ## عملية بطيئة تنتهي بمهلة لكنها نجحت
 
-`create_from_mermaid` قد يتجاوز مهلة العميل على مخططات متوسطة. **لا تُعِد
-المحاولة** قبل التحقق بـ`describe_scene` وإلا تضاعف المخطط. ولضبط المهلة:
-`EXCALIDRAW_RPC_TIMEOUT_MS`.
+`create_from_mermaid` قد يتجاوز مهلة العميل. تحقق أولًا بـ`describe_scene`. وإذا
+أعدت الطلب نفسه في الرسم نفسه خلال عشر دقائق، يعيد الجسر النتيجة السابقة بدل
+مضاعفة المخطط. استخدم `forceDuplicate: true` فقط للتكرار المقصود. ولرفع مهلة
+النقل اضبط `EXCALIDRAW_RPC_TIMEOUT_MS` في إعداد عميل MCP.
 
 ## move_note يبدو معلّقًا
 
