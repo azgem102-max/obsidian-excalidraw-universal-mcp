@@ -124,7 +124,7 @@ node doctor.mjs --vault "C:\مسار\خزنة Obsidian"
 اللغة:
 
 ```
-RESULT install=ready bridge=ok ready=true
+RESULT install=ready bridge=ok client=registered ready=true
 ```
 
 `install=ready` يعني التثبيت مكتمل، و`bridge=ok` يعني الجسر حيّ. وأي قيمة أخرى

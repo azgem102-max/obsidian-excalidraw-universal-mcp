@@ -105,7 +105,7 @@ node doctor.mjs --vault "C:\path\to\Vault"
 **المتوقّع هو السطر الأخير**، وهو ثابت بالعربية والإنجليزية معًا:
 
 ```
-RESULT install=ready bridge=ok ready=true
+RESULT install=ready bridge=ok client=registered ready=true
 ```
 
 طابق هذا السطر لا عبارات الواجهة، فهي تُترجَم — وأنت أضفت `--lang en` قبل قليل.

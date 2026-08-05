@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import http from "node:http";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
 const execFileAsync = promisify(execFile);
@@ -194,6 +194,16 @@ test("doctor reports the Arabic font state without making it a requirement", asy
     // 1) لا خط: null تعني «لا تمرّر fontFamily إطلاقًا».
     const absent = await run("{}");
     assert.deepEqual(absent.font, { enabled: false, vaultPath: null, fileFound: false, arabicFontFamily: null });
+
+    // القيمة الافتراضية في الإضافة اسم خط لا مسار ملف. حتى لو وُجد ملف عادي
+    // بالاسم نفسه في جذر الخزنة فلا يجوز اعتباره الخط الرابع.
+    await fs.writeFile(path.join(vault, "Virgil"), "not-a-font");
+    const defaultName = await run(JSON.stringify({
+      experimentalEnableFourthFont: true, experimantalFourthFont: "Virgil",
+    }));
+    assert.equal(defaultName.font.vaultPath, null);
+    assert.equal(defaultName.font.fileFound, false);
+    assert.equal(defaultName.font.arabicFontFamily, null);
 
     // 2) مسجَّل وملفه مفقود: لا جاهزية كاذبة.
     const missing = await run(registered);
@@ -392,8 +402,19 @@ test("a cross-host client is skipped, not fatal to the whole install", async () 
   // معيار نجاح واحد قابل للقراءة برمجيًا بدل `installed: true` الدائم.
   assert.match(install, /const ok = manualSteps\.length === 0/);
   assert.match(install, /if \(!ok\) process\.exitCode = 3/);
+  assert.match(
+    install,
+    /configureClients\(\s*args,\s*selectedClients,/,
+    "القائمة بعد استبعاد العميل المتعذّر هي التي يجب أن تصل إلى التسجيل",
+  );
+  assert.doesNotMatch(
+    install.match(/async function configureClients[\s\S]*?\n}\n\nconst selectedClients/)?.[0] || "",
+    /requestedClients\(args\.clients\)/,
+    "لا يجوز إعادة بناء القائمة الأصلية داخل configureClients",
+  );
 
-  const { shouldBlockCrossHostClaudeDesktop } = await import(path.join(root, "platform-paths.mjs"));
+  const platformPathsUrl = pathToFileURL(path.join(root, "platform-paths.mjs")).href;
+  const { shouldBlockCrossHostClaudeDesktop } = await import(platformPathsUrl);
   assert.equal(shouldBlockCrossHostClaudeDesktop({ platform: "linux", wsl: false, claudeDesktopSelected: true }), true);
   assert.equal(shouldBlockCrossHostClaudeDesktop({ platform: "linux", wsl: true, claudeDesktopSelected: true }), false);
   assert.equal(shouldBlockCrossHostClaudeDesktop({ platform: "linux", wsl: false, claudeDesktopSelected: false }), false);

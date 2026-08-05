@@ -403,8 +403,8 @@ function requestedClients(value) {
   return new Set(raw);
 }
 
-async function configureClients(args, sourceRoot, serverPath, vaultPath, preparedWslClaudeDesktopTarget = null) {
-  const clients = requestedClients(args.clients);
+async function configureClients(args, selectedClients, sourceRoot, serverPath, vaultPath, preparedWslClaudeDesktopTarget = null) {
+  const clients = selectedClients;
   const configured = {};
   const clientNode = args.node || defaultNodeCommand();
   if (clients.has("project")) {
@@ -537,6 +537,7 @@ const content = await installContent(sourceRoot, vaultPath);
 const font = await installLocalFont(args.font, vaultPath, obsidianPath);
 const clients = await configureClients(
   args,
+  selectedClients,
   sourceRoot,
   serverPath,
   vaultPath,

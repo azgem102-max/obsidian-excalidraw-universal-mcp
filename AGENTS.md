@@ -96,7 +96,7 @@ node doctor.mjs --vault "<VAULT>" --json
 (الاثنان). وفي المخرجات النصية سطر أخير ثابت **لا يتغيّر بتغيّر اللغة**:
 
 ```
-RESULT install=ready bridge=ok ready=true
+RESULT install=ready bridge=ok client=registered ready=true
 ```
 
 طابق هذا، **لا** عبارات الواجهة — فهي تُترجَم، والوثائق توصي بـ`--lang en` على

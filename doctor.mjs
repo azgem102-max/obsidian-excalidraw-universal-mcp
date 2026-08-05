@@ -185,8 +185,10 @@ const excalidrawSettings = await readJson(
 const rawFontPath = excalidrawSettings?.experimantalFourthFont;
 // مسار داخل الخزنة فقط. مطلقًا أو صاعدًا بـ`..` أو بشرطة خلفية لا تحمّله الإضافة،
 // فقول «جاهز» عنه كذب — ونفس الشرط في الجسر حتى لا يختلف التقريران.
+const looksLikeFontFile =
+  typeof rawFontPath === "string" && /\.(otf|ttf|woff2?)$/i.test(rawFontPath);
 const fourthFontPath =
-  typeof rawFontPath === "string" && rawFontPath && !rawFontPath.startsWith("/") &&
+  looksLikeFontFile && !rawFontPath.startsWith("/") &&
   !rawFontPath.includes("\\") && !rawFontPath.split("/").includes("..") && !/^[A-Za-z]:/.test(rawFontPath)
     ? rawFontPath
     : null;
