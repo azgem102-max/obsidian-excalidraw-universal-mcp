@@ -4,6 +4,14 @@
 
 > اقرأ `CLAUDE.md` أو `AGENTS.md`، ثم جهّز هذا الجهاز لاستخدام Obsidian وExcalidraw عبر MCP. ابحث عن الـVault إن أمكن، وإن وجدت أكثر من واحد فاسألني أيها أختار. نفّذ المثبت، اطلب مني إعادة تشغيل Obsidian والعميل مرة واحدة، ثم شغّل فحص الجاهزية فقط. لا تشغّل اختبارات التطوير الطويلة.
 
+إذا أردت خطوات قصيرة خاصة ببرنامجك، ابدأ من أحد هذين الملفين:
+
+- **Codex أو ChatGPT محلي يدعم MCP:** `docs/SETUP-CODEX-CHATGPT-AR.md`
+- **Claude Desktop أو Claude Code:** `docs/SETUP-CLAUDE-AR.md`
+
+تنبيه: موقع ChatGPT في المتصفح لا يستطيع وحده الوصول إلى Vault محلية على جهازك؛
+المسار المدعوم مباشرة هنا هو Codex أو تطبيق محلي يدعم MCP.
+
 ## ما الذي سيُثبت؟
 
 1. **Obsidian** — التطبيق المضيف، **ولا يثبّته هذا الريبو**. إن لم يكن مثبتًا يفتح
@@ -143,6 +151,8 @@ RESULT install=ready bridge=ok client=registered ready=true
 
 ## وثائق أعمق عند الحاجة
 
+- `docs/SETUP-CODEX-CHATGPT-AR.md` — خطوات Codex وحده بلا إعدادات Claude.
+- `docs/SETUP-CLAUDE-AR.md` — يفصل Claude Desktop عن Claude Code بوضوح.
 - `docs/INSTALLATION-AR.md` — كل وسائط المثبّت: `--offline` و`--skip-official`
   و`--force-plugin-versions` و`--node` و`--codex-config`، وشرط وجود الريبو على قرص
   Windows في حالة WSL.

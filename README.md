@@ -6,6 +6,14 @@
 
 > رتّب هذه الأفكار في خريطة ذهنية، وارسمها داخل Obsidian، ثم احفظها في مجلد المشروع.
 
+## اختر دليلك قبل التثبيت
+
+- **Codex أو ChatGPT محلي يدعم MCP:** [دليل Codex وChatGPT](./docs/SETUP-CODEX-CHATGPT-AR.md)
+- **Claude Desktop أو Claude Code:** [دليل Claude](./docs/SETUP-CLAUDE-AR.md)
+
+لا تخلط الخطوات: Claude Desktop يحتاج تفعيل موصل `excalidraw` بعد التثبيت، أما
+Codex وClaude Code فلا يحتاجان هذا الزر.
+
 ## أهم ميزة: دعم السكربتات
 
 المشروع لا يكتفي برسم المربعات والأسهم. يستطيع تشغيل سكربتات Excalidraw الحقيقية من داخل Script Engine، لذلك يمكن للذكاء الاصطناعي استخدام الأدوات التي يستعملها مستخدمو الإضافة المحترفون.
@@ -53,7 +61,9 @@
 2. نزّل المشروع من **Code ثم Download ZIP** وفك الضغط عنه.
 3. افتح المجلد واضغط مرتين على **`setup-windows.cmd`**.
 4. اختر مجلد خزنة Obsidian من النافذة، وانتظر ظهور رسالة النجاح.
-5. أغلق وافتح Obsidian وClaude أو Codex مرة واحدة.
+5. افتح أي رسم Excalidraw داخل Obsidian مرة واحدة.
+6. أغلق وافتح Claude أو Codex مرة واحدة.
+7. **Claude Desktop فقط:** فعّل موصل `excalidraw` من قائمة الموصلات.
 
 هذا كل شيء. لا تحتاج إلى كتابة مسارات أو تعديل ملفات إعدادات. وإذا كان Node.js غير موجود، يسألك الملف أولًا ثم يثبّت نسخته الرسمية المستقرة باستخدام Windows Package Manager. لا يحدث أي تثبيت دون موافقتك.
 
@@ -153,6 +163,8 @@ node install.mjs --vault "C:\مسار\الخزنة" --clients all --font "C:\م�
 ## إذا احتجت تفاصيل أكثر
 
 - [ابدأ من هنا](./START-HERE-AR.md)
+- [تثبيت Codex وChatGPT](./docs/SETUP-CODEX-CHATGPT-AR.md)
+- [تثبيت Claude Desktop وClaude Code](./docs/SETUP-CLAUDE-AR.md)
 - [دليل السكربتات](./SCRIPT-CATALOG-AR.md)
 - [الاستخدام مع الذكاء الاصطناعي](./docs/AI-USAGE-AR.md)
 - [حل المشكلات](./docs/TROUBLESHOOTING-AR.md)

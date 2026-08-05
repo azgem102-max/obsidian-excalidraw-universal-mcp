@@ -91,4 +91,6 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Setup completed successfully."
-Write-Host "Close and reopen Obsidian and your AI app once."
+Write-Host "1. Restart Obsidian and open any Excalidraw drawing once."
+Write-Host "2. Restart Claude or Codex once."
+Write-Host "3. Claude Desktop only: enable the excalidraw connector."

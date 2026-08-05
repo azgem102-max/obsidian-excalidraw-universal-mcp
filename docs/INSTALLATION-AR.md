@@ -1,5 +1,12 @@
 # دليل التثبيت
 
+لخطوات قصيرة بحسب البرنامج استخدم أولًا:
+
+- `SETUP-CODEX-CHATGPT-AR.md` لـCodex أو تطبيق ChatGPT محلي يدعم MCP.
+- `SETUP-CLAUDE-AR.md` لـClaude Desktop أو Claude Code.
+
+هذا الملف للتفاصيل والخيارات المتقدمة بعد اختيار مسار العميل الصحيح.
+
 ## المتطلبات
 
 - Obsidian Desktop؛ الجسر محلي ولا يعمل في المتصفح.

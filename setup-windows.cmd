@@ -35,7 +35,10 @@ echo A window will open. Select the folder you use as your Obsidian vault.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-on-windows.ps1"
 if errorlevel 1 goto :setup_failed
 echo.
-echo Done. Close and reopen Obsidian and Claude/Codex once.
+echo Done.
+echo 1. Restart Obsidian and open any Excalidraw drawing once.
+echo 2. Restart Claude or Codex once.
+echo 3. Claude Desktop only: enable the excalidraw connector.
 goto :end
 
 :setup_failed

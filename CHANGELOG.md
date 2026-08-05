@@ -9,6 +9,9 @@
   `open: false` مع `nextAction` صريح.
 - صار `read_note.tags` يجمع وسوم المتن وFrontmatter، مع حقلين منفصلين
   `inlineTags` و`frontmatterTags` لمن يحتاج معرفة المصدر.
+- أضيف دليل مستقل وقصير لـCodex/ChatGPT المحلي، ودليل آخر يفصل Claude Desktop
+  عن Claude Code؛ ويربط بهما README وصفحة البداية، وتذكّر أداة Windows بخطوات
+  إعادة التشغيل وموصل Claude Desktop بعد نجاح التثبيت.
 
 ### مراجعة Codex على Windows — 2026-08-05
 

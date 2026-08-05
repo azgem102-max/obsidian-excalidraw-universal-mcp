@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("portable package contains AI entrypoints and pinned official plugins", async () => {
-  for (const name of ["START-HERE-AR.md", "AGENTS.md", "CLAUDE.md", "doctor.mjs", "install-on-windows.ps1", "setup-windows.cmd", "plugin-versions.json"]) {
+  for (const name of ["START-HERE-AR.md", "AGENTS.md", "CLAUDE.md", "doctor.mjs", "install-on-windows.ps1", "setup-windows.cmd", "plugin-versions.json", "docs/SETUP-CODEX-CHATGPT-AR.md", "docs/SETUP-CLAUDE-AR.md"]) {
     await fs.access(path.join(root, name));
   }
   const lock = JSON.parse(await fs.readFile(path.join(root, "plugin-versions.json"), "utf8"));
@@ -272,6 +272,32 @@ test("entrypoints document all three clients and isolate the connector step", as
   assert.match(agents, /describe_scene/);
 });
 
+test("each public AI client has a short standalone setup path", async () => {
+  const read = (name) => fs.readFile(path.join(root, ...name.split("/")), "utf8");
+  const [readme, start, codex, claude] = await Promise.all([
+    read("README.md"),
+    read("START-HERE-AR.md"),
+    read("docs/SETUP-CODEX-CHATGPT-AR.md"),
+    read("docs/SETUP-CLAUDE-AR.md"),
+  ]);
+
+  for (const entrypoint of [readme, start]) {
+    assert.match(entrypoint, /SETUP-CODEX-CHATGPT-AR\.md/);
+    assert.match(entrypoint, /SETUP-CLAUDE-AR\.md/);
+  }
+
+  assert.match(codex, /--clients codex/);
+  assert.match(codex, /لا تبحث عن زر موصل داخل Codex/);
+  assert.match(codex, /RESULT install=ready bridge=ok client=registered ready=true/);
+
+  assert.match(claude, /Claude Desktop على Windows/);
+  assert.match(claude, /Claude Code/);
+  assert.match(claude, /--clients project/);
+  assert.match(claude, /فعّل `excalidraw`/);
+  assert.match(claude, /حاوية أو Linux سحابي/);
+  assert.match(claude, /RESULT install=ready bridge=ok client=registered ready=true/);
+});
+
 // وثيقة تأمر الوكيل بترقيم الخط بيده تُبطل القاعدة كلها، ولو كانت القاعدة مكتوبة
 // في ملف آخر. الطلب الجاهز في START-HERE هو ما يُلصق فعلًا، فهو الأخطر.
 test("no shipped document tells the agent to hard-code font family 4", async () => {
@@ -340,7 +366,7 @@ test("no client-specific rule is stated unconditionally in agent-facing docs", a
     { name: "العائلة الرابعة", pattern: /fontFamily: 4|العائلة الرابعة|الخط الرابع/, qualifiers: /ان |اذا |status|لا تفترض|اقرا|قد |تلقائيا|مفعل|مثبت|بحسب/ },
     { name: "الإغلاق الكامل", pattern: /إغلاق كامل|أغلق التطبيق كاملًا|أيقونة شريط المهام/, qualifiers: /Claude Desktop|بحسب عميله|فقط/ },
   ];
-  for (const name of ["AGENTS.md", "START-HERE-AR.md", "README.md", "docs/TROUBLESHOOTING-AR.md"]) {
+  for (const name of ["AGENTS.md", "START-HERE-AR.md", "README.md", "docs/TROUBLESHOOTING-AR.md", "docs/SETUP-CODEX-CHATGPT-AR.md", "docs/SETUP-CLAUDE-AR.md"]) {
     const text = await fs.readFile(path.join(root, ...name.split("/")), "utf8").catch(() => "");
     const lines = text.split("\n");
     for (const [index, line] of lines.entries()) {
