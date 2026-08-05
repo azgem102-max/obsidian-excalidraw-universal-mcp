@@ -120,7 +120,16 @@ node install.mjs --vault "$HOME/Documents/Obsidian Vault" --clients all --projec
 node doctor.mjs --vault "C:\مسار\خزنة Obsidian"
 ```
 
-إذا ظهرت عبارة **جاهز للاستخدام** فقد انتهيت.
+معيار النجاح هو **السطر الأخير** الذي يطبعه الطبيب، وهو ثابت لا يتغيّر بتغيّر
+اللغة:
+
+```
+RESULT install=ready bridge=ok ready=true
+```
+
+`install=ready` يعني التثبيت مكتمل، و`bridge=ok` يعني Obsidian مفتوح والجسر حيّ.
+ولو كان `install=ready` مع `bridge` غير ذلك فالتثبيت سليم وObsidian مغلق فقط.
+وللقراءة برمجيًا: `node doctor.mjs --vault "<path>" --json` وفيه `ready`.
 
 ## الطريقة الأسهل: اترك الذكاء الاصطناعي يجهّزه
 

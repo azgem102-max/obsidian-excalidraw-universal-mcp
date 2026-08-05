@@ -317,3 +317,102 @@ test("every declared tool has an implementation on the other side", async () => 
   assert.deepEqual(blocks.filter(([, b]) => !b.includes("inputSchema")).map(([n]) => n), [], "أداة بلا inputSchema");
   assert.deepEqual(blocks.filter(([, b]) => !/description:/.test(b)).map(([n]) => n), [], "أداة بلا وصف");
 });
+
+// حرس معمَّم: أي قاعدة تخصّ عميلًا واحدًا يجب أن تُذكر مقيَّدة به. حرسي الأول كان
+// يمسح ذكر العائلة الرابعة وحدها، فمرّت خطوة «فعّل الموصل» مطلقةً في AGENTS.md —
+// وهو أول ملف يقرأه الوكيل — فيُرسَل مستخدم Codex إلى زر لا وجود له.
+test("no client-specific rule is stated unconditionally in agent-facing docs", async () => {
+  // التشكيل يُجرَّد قبل المطابقة: «مفعَّل» و«مفعّل» كلمة واحدة، والاختبار لا يجوز أن
+  // يسقط على فرق حركة.
+  const bare = (text) => text.replace(/[\u064B-\u0652\u0670\u0640]/g, "");
+  const guarded = [
+    { name: "الموصل", pattern: /موصل|connector/i, qualifiers: /Claude Desktop|لا يحتاج|فقط|بحسب عميله|الزامي في|وحده/ },
+    { name: "العائلة الرابعة", pattern: /fontFamily: 4|العائلة الرابعة|الخط الرابع/, qualifiers: /ان |اذا |status|لا تفترض|اقرا|قد |تلقائيا|مفعل|مثبت|بحسب/ },
+    { name: "الإغلاق الكامل", pattern: /إغلاق كامل|أغلق التطبيق كاملًا|أيقونة شريط المهام/, qualifiers: /Claude Desktop|بحسب عميله|فقط/ },
+  ];
+  for (const name of ["AGENTS.md", "START-HERE-AR.md", "README.md", "docs/TROUBLESHOOTING-AR.md"]) {
+    const text = await fs.readFile(path.join(root, ...name.split("/")), "utf8").catch(() => "");
+    const lines = text.split("\n");
+    for (const [index, line] of lines.entries()) {
+      for (const rule of guarded) {
+        if (!rule.pattern.test(bare(line))) continue;
+        // السياق: العنوان الذي تحته السطر، وجاره، وترويسة الجدول إن كان صفًا فيه —
+        // فالتقييد في الجدول يعيش في عمود الترويسة لا في الصف نفسه.
+        const heading = lines.slice(0, index + 1).reverse().find((l) => l.startsWith("#")) || "";
+        let tableHeader = "";
+        if (line.trimStart().startsWith("|")) {
+          for (let scan = index; scan >= 0 && lines[scan].trimStart().startsWith("|"); scan -= 1) {
+            if (/^\s*\|[\s|:-]+\|\s*$/.test(lines[scan])) { tableHeader = lines[scan - 1] || ""; break; }
+          }
+        }
+        const context = `${heading}\n${tableHeader}\n${lines[index - 1] || ""}\n${line}\n${lines[index + 1] || ""}`;
+        assert.ok(
+          rule.qualifiers.test(bare(context)),
+          `${name}:${index + 1} يذكر «${rule.name}» بلا تقييد بالعميل:\n${line}`,
+        );
+      }
+    }
+  }
+});
+
+// معيار النجاح كان عبارة مترجَمة، والوثائق نفسها توصي بـ--lang en فلا تظهر.
+test("the readiness criterion is language-independent and documented", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "excalidraw-result-"));
+  try {
+    await fs.mkdir(path.join(temporary, ".obsidian"), { recursive: true });
+    const run = async (lang) => {
+      const result = await execFileAsync(process.execPath, [
+        path.join(root, "doctor.mjs"), "--vault", temporary, "--lang", lang, "--skip-live",
+      ]).catch((error) => ({ stdout: error.stdout }));
+      return result.stdout.trim().split("\n").at(-1).trim();
+    };
+    const [ar, en] = [await run("ar"), await run("en")];
+    assert.equal(ar, en, "سطر النتيجة يجب أن يكون نفسه في اللغتين");
+    assert.match(ar, /^RESULT install=(ready|incomplete) bridge=\S+ ready=(true|false)$/);
+
+    // والوثائق تحيل إليه لا إلى عبارة واجهة.
+    for (const name of ["AGENTS.md", "START-HERE-AR.md", "README.md"]) {
+      const text = await fs.readFile(path.join(root, name), "utf8");
+      assert.match(text, /RESULT install=/, `${name} يجب أن يذكر سطر النتيجة الثابت`);
+    }
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+});
+
+// الجملة الآمرة الوحيدة في وثيقة الدخول كانت تفشل قبل تثبيت أي شيء على Linux.
+test("a cross-host client is skipped, not fatal to the whole install", async () => {
+  const install = await fs.readFile(path.join(root, "install.mjs"), "utf8");
+  assert.match(install, /selectedClients\.delete\("claude-desktop"\)/, "يُستثنى العميل المتعذّر وحده");
+  assert.match(install, /skippedClients\.push\(/);
+  assert.match(install, /if \(!selectedClients\.size\)/, "الفشل صحيح فقط إن لم يبقَ عميل");
+  // اسم عميل مجهول كان يمرّ بلا أثر ويخرج المثبّت كأنه نجح.
+  assert.match(install, /عميل غير معروف/);
+  assert.match(install, /const KNOWN_CLIENTS = \["project", "codex", "claude-desktop"\]/);
+  // معيار نجاح واحد قابل للقراءة برمجيًا بدل `installed: true` الدائم.
+  assert.match(install, /const ok = manualSteps\.length === 0/);
+  assert.match(install, /if \(!ok\) process\.exitCode = 3/);
+
+  const { shouldBlockCrossHostClaudeDesktop } = await import(path.join(root, "platform-paths.mjs"));
+  assert.equal(shouldBlockCrossHostClaudeDesktop({ platform: "linux", wsl: false, claudeDesktopSelected: true }), true);
+  assert.equal(shouldBlockCrossHostClaudeDesktop({ platform: "linux", wsl: true, claudeDesktopSelected: true }), false);
+  assert.equal(shouldBlockCrossHostClaudeDesktop({ platform: "linux", wsl: false, claudeDesktopSelected: false }), false);
+});
+
+// AGENTS.md كان يخلط بروتوكول المساهم ببروتوكول الإعداد، ولا يأمر بسؤال عن العميل.
+test("AGENTS.md separates the setup audience and states the unknowns to ask", async () => {
+  const agents = await fs.readFile(path.join(root, "AGENTS.md"), "utf8");
+  assert.match(agents, /جمهوران/, "يجب أن يفصل جمهور الإعداد من جمهور المساهمة");
+  assert.match(agents, /أي عميل MCP تستخدم/, "يجب أن يأمر بسؤال المستخدم عن عميله");
+  assert.match(agents, /--node/, "قيمة --node يجب أن تكون موثّقة");
+  assert.match(agents, /where\.exe node/, "وطريقة معرفتها");
+  assert.match(agents, /EXCALIDRAW_RPC_TIMEOUT_MS/);
+  assert.match(agents, /\[mcp_servers\.excalidraw\.env\]/, "وموضع المتغيّر في كل عميل");
+  // بروتوكول السياق للمساهم لا للمُعِدّ، فيجب أن يأتي بعد قسم الإعداد.
+  assert.ok(
+    agents.indexOf("## بروتوكول المساهم") > agents.indexOf("## إذا طلب المستخدم الإعداد"),
+    "بروتوكول المساهم يجب أن يكون بعد بروتوكول الإعداد لا قبله",
+  );
+  assert.match(agents, /استبعد|node_modules/, "بحث الخزنة يجب أن يذكر ما يُستبعد");
+  assert.match(agents, /صفر خزنات/, "وحالة انعدام الخزنة");
+});

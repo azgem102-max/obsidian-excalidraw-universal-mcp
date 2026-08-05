@@ -386,9 +386,20 @@ async function wslClaudeDesktopTarget(args, sourceRoot, vaultPath) {
   });
 }
 
+const KNOWN_CLIENTS = ["project", "codex", "claude-desktop"];
+
 function requestedClients(value) {
   const raw = String(value || "project").split(",").map((item) => item.trim()).filter(Boolean);
-  if (raw.includes("all")) return new Set(["project", "codex", "claude-desktop"]);
+  if (raw.includes("all")) return new Set(KNOWN_CLIENTS);
+  // اسم عميل مجهول كان يمرّ بلا خطأ فلا يُضبط شيء ويخرج المثبّت كأنه نجح —
+  // و`--clients cursor` كان يفعل ذلك بالضبط رغم أن الوثائق تَعِد بـCursor.
+  const unknown = raw.filter((item) => !KNOWN_CLIENTS.includes(item));
+  if (unknown.length) {
+    throw new Error(
+      `عميل غير معروف: ${unknown.join(", ")}. المدعوم: ${KNOWN_CLIENTS.join(", ")} أو all. ` +
+      "ولعميل يقرأ إعداد MCP من مجلد المشروع (مثل Cursor) استخدم --clients project ثم انسخ .mcp.json إلى المكان الذي يقرأه عميلك.",
+    );
+  }
   return new Set(raw);
 }
 
@@ -480,17 +491,32 @@ if (!args.vault) {
 }
 
 const selectedClients = requestedClients(args.clients);
-if (shouldBlockCrossHostClaudeDesktop({
+// جلسة Linux منفصلة عن Claude Desktop على Windows: لا يجوز كتابة مسارات Linux
+// داخل إعداد تطبيق Windows. لكن **إلغاء التثبيت كله** كان ثمنًا باهظًا: `project`
+// و`codex` قابلان للضبط هنا تمامًا، و`--clients all` كان يفشل قبل أن يثبّت شيئًا
+// فيبقى المستخدم بلا شيء — وهو الأمر الآمر الوحيد في وثيقة الدخول. فيُستثنى
+// العميل المتعذّر وحده، ويُبلَّغ عنه صريحًا في المخرجات.
+const crossHostClaudeDesktop = shouldBlockCrossHostClaudeDesktop({
   wsl: RUNNING_IN_WSL,
   claudeDesktopSelected: selectedClients.has("claude-desktop"),
   explicitConfig: Boolean(args["claude-desktop-config"]),
-})) {
-  throw new Error([
-    "جلسة Linux الحالية منفصلة عن Claude Desktop على Windows، لذلك لن يكتب المثبّت مسارات Linux داخل إعداد Windows.",
-    "نزّل الريبو على Windows ثم شغّل هذا الأمر في Windows PowerShell:",
-    "",
-    "Double-click setup-windows.cmd on Windows and select your Obsidian vault.",
-  ].join("\n"));
+});
+const skippedClients = [];
+if (crossHostClaudeDesktop) {
+  selectedClients.delete("claude-desktop");
+  skippedClients.push({
+    client: "claude-desktop",
+    reason: "CROSS_HOST_LINUX",
+    message: [
+      "جلسة Linux الحالية منفصلة عن Claude Desktop على Windows، فلن تُكتب مسارات Linux داخل إعداد Windows.",
+      "ضُبط ما يمكن ضبطه من هنا. ولإكمال Claude Desktop شغّل على Windows:",
+      "setup-windows.cmd (بالنقر المزدوج) واختر خزنتك من النافذة.",
+    ].join("\n"),
+  });
+  // لم يبقَ عميل يمكن ضبطه: هنا الفشل صحيح لأن العملية كلها بلا أثر.
+  if (!selectedClients.size) {
+    throw new Error(skippedClients[0].message);
+  }
 }
 
 const sourceRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -517,7 +543,19 @@ const clients = await configureClients(
   preparedWslClaudeDesktopTarget,
 );
 
+// معيار نجاح واحد قابل للقراءة برمجيًا. `installed: true` كان يُطبع دائمًا، فلا
+// يفرّق النجاح التام من نجاح ينقصه تسجيل عميل — ومن هنا جاء «installed: true»
+// الكاذب على نسخة المتجر. `ok` يكون صحيحًا فقط إن لم يبقَ عمل على المستخدم.
+const manualSteps = [
+  ...skippedClients.map((entry) => entry.message),
+  ...(clients.claudeDesktopManualStepRequired
+    ? ["تعذّر تحديد ملف إعداد Claude Desktop بأمان: سجّل الخادم من لوحة Local MCP servers بزر Edit Config."]
+    : []),
+];
+const ok = manualSteps.length === 0;
+
 process.stdout.write(`${JSON.stringify({
+  ok,
   installed: true,
   vaultPath,
   officialPlugins,
@@ -526,5 +564,9 @@ process.stdout.write(`${JSON.stringify({
   content,
   font,
   clients,
+  ...(skippedClients.length ? { skippedClients } : {}),
+  ...(manualSteps.length ? { manualSteps } : {}),
   next: ["Restart Obsidian once", "Restart the selected MCP clients once", `Run: node ${path.join(sourceRoot, "doctor.mjs")} --vault ${JSON.stringify(vaultPath)}`],
 }, null, 2)}\n`);
+// رمز الخروج يعبّر عن المعيار نفسه: 0 يعني «لا عمل بقي عليك».
+if (!ok) process.exitCode = 3;

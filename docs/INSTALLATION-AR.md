@@ -5,7 +5,11 @@
 - Obsidian Desktop؛ الجسر محلي ولا يعمل في المتصفح.
 - Node.js 18 أو أحدث.
 - Vault فُتح مرة واحدة على الأقل كي يوجد مجلد `.obsidian`.
-- عميل MCP محلي: Claude Code أو Claude Desktop أو Codex أو Cursor ونحوه.
+- عميل MCP محلي. المثبّت يضبط ثلاثة بنفسه: `project` (ملف `.mcp.json` في جذر
+  المشروع، وهو ما يقرأه Claude Code) و`codex` و`claude-desktop`. وأي عميل آخر
+  يقرأ إعداد MCP من ملف (مثل Cursor) يُخدَم بـ`--clients project` ثم نسخ
+  `.mcp.json` إلى المكان الذي يقرأه ذلك العميل. والاسم غير المعروف في
+  `--clients` يُرفض بخطأ صريح، فلا يمرّ بلا أثر.
 
 ## التثبيت الموصى به
 

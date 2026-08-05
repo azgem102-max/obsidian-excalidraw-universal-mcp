@@ -278,7 +278,12 @@ if (args.json) {
   for (const c of installChecks.filter((x) => x.versionDrift)) {
     process.stdout.write(`\n  ! ${t.versionDrift(c.name.slice(7), c.version, c.pinnedVersion)}\n`);
   }
-  process.stdout.write("\n");
+  // سطر واحد ثابت لا يتغيّر بتغيّر اللغة. كان معيار النجاح في الوثائق عبارة عربية،
+  // والوثائق نفسها توصي بـ`--lang en` على PowerShell — فالعبارة لا تُطبع أبدًا في
+  // المسار الموصى به، ويستنتج الوكيل فشلًا من تثبيت ناجح. هذا السطر هو المعيار.
+  process.stdout.write(
+    `\nRESULT install=${installReady ? "ready" : "incomplete"} bridge=${bridge.state} ready=${installReady && liveReady}\n\n`,
+  );
 }
 
 // رمز الخروج: يعبّر عن التثبيت. الفحص الحيّ يُلزم فقط بـ--require-live.
